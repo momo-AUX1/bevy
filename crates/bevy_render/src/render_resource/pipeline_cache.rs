@@ -242,6 +242,15 @@ impl PipelineCache {
             // Some WinRT/UWP downlevel backends (notably ANGLE/GLES) require uniform buffer binding
             // types to have 16-byte sizes, matching the WebGL2 constraint.
             global_shader_defs.push("SIXTEEN_BYTE_ALIGNMENT".into());
+
+            // ANGLE/GLES often does not support cube map arrays.
+            if !render_adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES)
+            {
+                global_shader_defs.push("NO_CUBE_ARRAY_TEXTURES_SUPPORT".into());
+            }
         }
 
         if cfg!(target_abi = "sim") {

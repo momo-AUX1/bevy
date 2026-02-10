@@ -256,20 +256,41 @@ pub fn layout_entries(
             // Point Shadow Texture Cube Array
             (
                 2,
-                #[cfg(all(
-                    not(target_abi = "sim"),
-                    any(
-                        not(feature = "webgl"),
-                        not(target_arch = "wasm32"),
-                        feature = "webgpu"
-                    )
-                ))]
-                texture_cube_array(TextureSampleType::Depth),
-                #[cfg(any(
-                    target_abi = "sim",
-                    all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu"))
-                ))]
-                texture_cube(TextureSampleType::Depth),
+                {
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    {
+                        if render_adapter
+                            .get_downlevel_capabilities()
+                            .flags
+                            .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES)
+                        {
+                            texture_cube_array(TextureSampleType::Depth)
+                        } else {
+                            texture_cube(TextureSampleType::Depth)
+                        }
+                    }
+                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                    {
+                        #[cfg(all(
+                            not(target_abi = "sim"),
+                            any(
+                                not(feature = "webgl"),
+                                not(target_arch = "wasm32"),
+                                feature = "webgpu"
+                            )
+                        ))]
+                        {
+                            texture_cube_array(TextureSampleType::Depth)
+                        }
+                        #[cfg(any(
+                            target_abi = "sim",
+                            all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu"))
+                        ))]
+                        {
+                            texture_cube(TextureSampleType::Depth)
+                        }
+                    }
+                },
             ),
             // Point Shadow Texture Array Comparison Sampler
             (3, sampler(SamplerBindingType::Comparison)),

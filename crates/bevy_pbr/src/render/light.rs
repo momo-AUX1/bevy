@@ -59,7 +59,7 @@ use bevy_render::{
     render_asset::RenderAssets,
     render_phase::*,
     render_resource::*,
-    renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
+    renderer::{RenderAdapter, RenderContext, RenderDevice, RenderQueue, ViewQuery},
     texture::*,
     view::ExtractedView,
     Extract,
@@ -795,7 +795,11 @@ pub enum LightEntity {
 pub fn prepare_lights(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
-    (render_device, render_queue): (Res<RenderDevice>, Res<RenderQueue>),
+    (render_device, render_queue, render_adapter): (
+        Res<RenderDevice>,
+        Res<RenderQueue>,
+        Res<RenderAdapter>,
+    ),
     mut global_clusterable_object_meta: ResMut<GlobalClusterableObjectMeta>,
     mut light_meta: ResMut<LightMeta>,
     views: Query<
@@ -854,22 +858,34 @@ pub fn prepare_lights(
     let mut point_lights: Vec<_> = point_lights.iter().collect::<Vec<_>>();
     let mut directional_lights: Vec<_> = directional_lights.iter().collect::<Vec<_>>();
 
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    let cube_array_textures_supported = render_adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES);
+
     #[cfg(any(
         not(feature = "webgl"),
         not(target_arch = "wasm32"),
         feature = "webgpu"
     ))]
-    let max_texture_array_layers = render_device.limits().max_texture_array_layers as usize;
-    #[cfg(any(
-        not(feature = "webgl"),
-        not(target_arch = "wasm32"),
-        feature = "webgpu"
-    ))]
-    let max_texture_cubes = max_texture_array_layers / 6;
+    let (max_texture_array_layers, max_texture_cubes) = {
+        let max_texture_array_layers = render_device.limits().max_texture_array_layers as usize;
+        let max_texture_cubes = max_texture_array_layers / 6;
+
+        // Some downlevel backends (notably ANGLE/GLES on WinRT/UWP) don't support cube map arrays.
+        // When cube arrays are unavailable, we can only support a single cube shadow map.
+        #[cfg(all(target_os = "windows", __WINRT__))]
+        let max_texture_cubes = if cube_array_textures_supported {
+            max_texture_cubes
+        } else {
+            1
+        };
+
+        (max_texture_array_layers, max_texture_cubes)
+    };
     #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
-    let max_texture_array_layers = 1;
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
-    let max_texture_cubes = 1;
+    let (max_texture_array_layers, max_texture_cubes) = (1, 1);
 
     if !*max_directional_lights_warning_emitted && directional_lights.len() > MAX_DIRECTIONAL_LIGHTS
     {
@@ -1145,22 +1161,41 @@ pub fn prepare_lights(
             .create_view(&TextureViewDescriptor {
                 label: Some("point_light_shadow_map_array_texture_view"),
                 format: None,
-                // NOTE: iOS Simulator is missing CubeArray support so we use Cube instead.
-                // See https://github.com/bevyengine/bevy/pull/12052 - remove if support is added.
-                #[cfg(all(
-                    not(target_abi = "sim"),
-                    any(
-                        not(feature = "webgl"),
-                        not(target_arch = "wasm32"),
-                        feature = "webgpu"
-                    )
-                ))]
-                dimension: Some(TextureViewDimension::CubeArray),
-                #[cfg(any(
-                    target_abi = "sim",
-                    all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu"))
-                ))]
-                dimension: Some(TextureViewDimension::Cube),
+                // NOTE: Some downlevel backends (notably WebGL2 and ANGLE/GLES on WinRT/UWP)
+                // don't support cube map arrays.
+                dimension: Some({
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    {
+                        if cube_array_textures_supported {
+                            TextureViewDimension::CubeArray
+                        } else {
+                            TextureViewDimension::Cube
+                        }
+                    }
+                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                    {
+                        // NOTE: iOS Simulator is missing CubeArray support so we use Cube instead.
+                        // See https://github.com/bevyengine/bevy/pull/12052 - remove if support is added.
+                        #[cfg(all(
+                            not(target_abi = "sim"),
+                            any(
+                                not(feature = "webgl"),
+                                not(target_arch = "wasm32"),
+                                feature = "webgpu"
+                            )
+                        ))]
+                        {
+                            TextureViewDimension::CubeArray
+                        }
+                        #[cfg(any(
+                            target_abi = "sim",
+                            all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu"))
+                        ))]
+                        {
+                            TextureViewDimension::Cube
+                        }
+                    }
+                }),
                 usage: None,
                 aspect: TextureAspect::DepthOnly,
                 base_mip_level: 0,
