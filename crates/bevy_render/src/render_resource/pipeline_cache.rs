@@ -234,16 +234,20 @@ impl PipelineCache {
 
         // Cache/adjust downlevel flags early so all WinRT/GLES workarounds stay consistent.
         let downlevel_flags = {
-            let mut flags = render_adapter.get_downlevel_capabilities().flags;
             #[cfg(all(target_os = "windows", __WINRT__))]
             {
+                let mut flags = render_adapter.get_downlevel_capabilities().flags;
                 // WinRT uses ANGLE/GLES which targets GLSL ES 3.00. Cube array textures require GLSL ES 3.10,
                 // so treat them as unsupported even if the backend reports otherwise.
                 if render_adapter.get_info().backend.to_str() == "gl" {
                     flags.set(DownlevelFlags::CUBE_ARRAY_TEXTURES, false);
                 }
+                flags
             }
-            flags
+            #[cfg(not(all(target_os = "windows", __WINRT__)))]
+            {
+                render_adapter.get_downlevel_capabilities().flags
+            }
         };
         #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
         {
