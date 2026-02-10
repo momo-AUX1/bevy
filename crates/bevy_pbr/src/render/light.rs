@@ -847,6 +847,10 @@ pub fn prepare_lights(
         return;
     };
 
+    // `render_adapter` is only needed on some targets (like WinRT/GLES).
+    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+    let _ = &render_adapter;
+
     // Pre-calculate for PointLights
     let cube_face_rotations = CUBE_MAP_FACES
         .iter()
