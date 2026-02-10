@@ -71,50 +71,62 @@ pub fn create_windows(
                 &monitors,
             );
 
-                if let Some(theme) = winit_window.theme() {
-                    window.window_theme = Some(convert_winit_theme(theme));
+            if let Some(theme) = winit_window.theme() {
+                window.window_theme = Some(convert_winit_theme(theme));
+            }
+
+            window
+                .resolution
+                .set_scale_factor_and_apply_to_physical_size(winit_window.scale_factor() as f32);
+
+            // On WinRT/UWP the system owns the CoreWindow size; seed Bevy's resolution from the
+            // actual surface size to avoid starting (or falling back) to 1x1 rendering.
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            {
+                let size = winit_window.surface_size();
+                if size.width != 0 && size.height != 0 {
+                    window
+                        .resolution
+                        .set_physical_resolution(size.width, size.height);
                 }
+            }
 
-                window
-                    .resolution
-                    .set_scale_factor_and_apply_to_physical_size(winit_window.scale_factor() as f32);
+            commands.entity(entity).insert((
+                CachedWindow(window.clone()),
+                CachedCursorOptions(cursor_options.clone()),
+                WinitWindowPressedKeys::default(),
+            ));
 
-                commands.entity(entity).insert((
-                    CachedWindow(window.clone()),
-                    CachedCursorOptions(cursor_options.clone()),
-                    WinitWindowPressedKeys::default(),
-                ));
-
-                if let Ok(handle_wrapper) = RawHandleWrapper::new(winit_window) {
-                    commands.entity(entity).insert(handle_wrapper.clone());
-                    if let Some(handle_holder) = handle_holder {
-                        *handle_holder.0.lock().unwrap() = Some(handle_wrapper);
-                    }
+            if let Ok(handle_wrapper) = RawHandleWrapper::new(winit_window) {
+                commands.entity(entity).insert(handle_wrapper.clone());
+                if let Some(handle_holder) = handle_holder {
+                    *handle_holder.0.lock().unwrap() = Some(handle_wrapper);
                 }
+            }
 
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if window.fit_canvas_to_parent {
-                        let canvas = winit_window
-                            .canvas()
-                            .expect("window.canvas() can only be called in main thread.");
-                        let style = canvas.style();
-                        style.set_property("width", "100%").unwrap();
-                        style.set_property("height", "100%").unwrap();
-                    }
+            #[cfg(target_arch = "wasm32")]
+            {
+                if window.fit_canvas_to_parent {
+                    let canvas = winit_window
+                        .canvas()
+                        .expect("window.canvas() can only be called in main thread.");
+                    let style = canvas.style();
+                    style.set_property("width", "100%").unwrap();
+                    style.set_property("height", "100%").unwrap();
                 }
+            }
 
-                #[cfg(target_os = "ios")]
-                {
-                    winit_window.recognize_pinch_gesture(window.recognize_pinch_gesture);
-                    winit_window.recognize_rotation_gesture(window.recognize_rotation_gesture);
-                    winit_window.recognize_doubletap_gesture(window.recognize_doubletap_gesture);
-                    if let Some((min, max)) = window.recognize_pan_gesture {
-                        winit_window.recognize_pan_gesture(true, min, max);
-                    } else {
-                        winit_window.recognize_pan_gesture(false, 0, 0);
-                    }
+            #[cfg(target_os = "ios")]
+            {
+                winit_window.recognize_pinch_gesture(window.recognize_pinch_gesture);
+                winit_window.recognize_rotation_gesture(window.recognize_rotation_gesture);
+                winit_window.recognize_doubletap_gesture(window.recognize_doubletap_gesture);
+                if let Some((min, max)) = window.recognize_pan_gesture {
+                    winit_window.recognize_pan_gesture(true, min, max);
+                } else {
+                    winit_window.recognize_pan_gesture(false, 0, 0);
                 }
+            }
 
             window_created_events.write(WindowCreated { window: entity });
         }

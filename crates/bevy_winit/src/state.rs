@@ -924,6 +924,14 @@ pub(crate) fn react_to_resize(
     size: PhysicalSize<u32>,
     window_resized: &mut MessageWriter<WindowResized>,
 ) {
+    // WinRT can transiently report a 0x0 surface size (for example if a SizeChanged payload
+    // fails to resolve). Treat that as "unknown" and keep the last good size so we don't end up
+    // rendering forever at 1x1.
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
+
     window
         .resolution
         .set_physical_resolution(size.width, size.height);
