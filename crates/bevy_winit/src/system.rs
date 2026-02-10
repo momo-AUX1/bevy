@@ -63,36 +63,23 @@ pub fn create_windows(
 
             info!("Creating new window {} ({})", window.title.as_str(), entity);
 
-            let winit_window = match winit_windows.create_window(
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            if !winit_windows.windows.is_empty() {
+                warn!(
+                    "WinRT/UWP supports only a single window. Ignoring additional window request for entity {entity}"
+                );
+                // Avoid leaving a phantom `Window` around when window creation is rejected.
+                commands.entity(entity).remove::<Window>();
+                continue;
+            }
+
+            let winit_window = winit_windows.create_window(
                 event_loop,
                 entity,
                 &window,
                 cursor_options,
                 &monitors,
-            ) {
-                Ok(winit_window) => winit_window,
-                Err(err) => {
-                    #[cfg(all(target_os = "windows", __WINRT__))]
-                    {
-                        if matches!(err, winit::error::RequestError::NotSupported(_)) {
-                            warn!(
-                                "WinRT/UWP supports only a single window. Ignoring additional window request for entity {entity}"
-                            );
-                        } else {
-                            warn!(
-                                "Failed to create winit window for entity {entity} on WinRT/UWP: {err}"
-                            );
-                        }
-
-                        // Avoid leaving a phantom `Window` around when window creation is rejected.
-                        commands.entity(entity).remove::<Window>();
-                        continue;
-                    }
-
-                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
-                    panic!("Failed to create winit window: {err}");
-                }
-            };
+            );
 
             if let Some(theme) = winit_window.theme() {
                 window.window_theme = Some(convert_winit_theme(theme));
@@ -369,33 +356,64 @@ pub(crate) fn changed_windows(
                         ))))
                     }
                     WindowMode::Fullscreen(monitor_selection, video_mode_selection) => {
-                        match select_monitor(
-                            &monitors,
-                            winit_window.primary_monitor(),
-                            winit_window.current_monitor(),
-                            &monitor_selection,
-                        ) {
-                            Some(monitor) => {
-                                if let Some(video_mode) =
-                                    get_selected_videomode(&monitor, &video_mode_selection)
-                                {
-                                    Some(Some(winit::monitor::Fullscreen::Exclusive(
-                                        monitor.clone(),
-                                        video_mode,
-                                    )))
-                                } else {
+                        #[cfg(all(target_os = "windows", __WINRT__))]
+                        {
+                            match select_monitor(
+                                &monitors,
+                                winit_window.primary_monitor(),
+                                winit_window.current_monitor(),
+                                &monitor_selection,
+                            ) {
+                                Some(monitor) => {
+                                    if let Some(video_mode) =
+                                        get_selected_videomode(&monitor, &video_mode_selection)
+                                    {
+                                        Some(Some(winit::monitor::Fullscreen::Exclusive(
+                                            monitor.clone(),
+                                            video_mode,
+                                        )))
+                                    } else {
+                                        warn!(
+                                            "Could not find valid fullscreen video mode for {:?} {:?}",
+                                            monitor_selection, video_mode_selection
+                                        );
+                                        None
+                                    }
+                                }
+                                None => {
                                     warn!(
-                                        "Could not find valid fullscreen video mode for {:?} {:?}",
-                                        monitor_selection, video_mode_selection
+                                        "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
                                     );
-                                    None
+                                    Some(Some(winit::monitor::Fullscreen::Borderless(None)))
                                 }
                             }
-                            None => {
+                        }
+
+                        #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                        {
+                            let monitor = select_monitor(
+                                &monitors,
+                                winit_window.primary_monitor(),
+                                winit_window.current_monitor(),
+                                &monitor_selection,
+                            )
+                            .unwrap_or_else(|| {
+                                panic!("Could not find monitor for {monitor_selection:?}")
+                            });
+
+                            if let Some(video_mode) =
+                                get_selected_videomode(&monitor, &video_mode_selection)
+                            {
+                                Some(Some(winit::monitor::Fullscreen::Exclusive(
+                                    monitor.clone(),
+                                    video_mode,
+                                )))
+                            } else {
                                 warn!(
-                                    "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
+                                    "Could not find valid fullscreen video mode for {:?} {:?}",
+                                    monitor_selection, video_mode_selection
                                 );
-                                Some(Some(winit::monitor::Fullscreen::Borderless(None)))
+                                None
                             }
                         }
                     }

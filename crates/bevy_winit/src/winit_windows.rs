@@ -56,18 +56,7 @@ impl WinitWindows {
         window: &Window,
         cursor_options: &CursorOptions,
         monitors: &WinitMonitors,
-    ) -> Result<&WindowWrapper<Box<dyn WinitWindow>>, RequestError> {
-        // WinRT/UWP is limited to a single CoreWindow in the initial backend. winit will return
-        // NotSupported on additional window creation attempts; proactively enforce that here to
-        // avoid panics elsewhere.
-        #[cfg(all(target_os = "windows", __WINRT__))]
-        if !self.windows.is_empty() {
-            return Err(
-                winit::error::NotSupportedError::new("WinRT/UWP supports only a single window")
-                    .into(),
-            );
-        }
-
+    ) -> &WindowWrapper<Box<dyn WinitWindow>> {
         let mut winit_window_attributes = winit::window::WindowAttributes::default();
 
         let maybe_selected_monitor = {
@@ -98,9 +87,24 @@ impl WinitWindows {
             WindowMode::BorderlessFullscreen(_) => winit_window_attributes
                 .with_fullscreen(Some(Fullscreen::Borderless(maybe_selected_monitor.clone()))),
             WindowMode::Fullscreen(monitor_selection, video_mode_selection) => {
-                if let Some(select_monitor) = maybe_selected_monitor.clone() {
+                #[cfg(all(target_os = "windows", __WINRT__))]
+                {
+                    // WinRT/UWP doesn't provide usable monitor handles for exclusive fullscreen.
+                    // Fall back to borderless fullscreen.
+                    warn!(
+                        "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
+                    );
+                    winit_window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
+                }
+
+                #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                {
+                    let select_monitor = &maybe_selected_monitor
+                        .clone()
+                        .expect("Unable to get monitor.");
+
                     if let Some(video_mode) =
-                        get_selected_videomode(&select_monitor, &video_mode_selection)
+                        get_selected_videomode(select_monitor, &video_mode_selection)
                     {
                         winit_window_attributes.with_fullscreen(Some(Fullscreen::Exclusive(
                             select_monitor.clone(),
@@ -113,11 +117,6 @@ impl WinitWindows {
                         );
                         winit_window_attributes
                     }
-                } else {
-                    warn!(
-                        "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
-                    );
-                    winit_window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
                 }
             }
             WindowMode::Windowed => {
@@ -320,7 +319,7 @@ impl WinitWindows {
             winit_window_attributes = winit_window_attributes.with_append(true);
         }
 
-        let winit_window = event_loop.create_window(winit_window_attributes)?;
+        let winit_window = event_loop.create_window(winit_window_attributes).unwrap();
         winit_window.set_visible(window.visible);
 
         // Do not set the grab mode on window creation if it's none. It can fail on mobile.
@@ -356,11 +355,10 @@ impl WinitWindows {
         self.entity_to_winit.insert(entity, winit_window.id());
         self.winit_to_entity.insert(winit_window.id(), entity);
 
-        Ok(self
-            .windows
+        self.windows
             .entry(winit_window.id())
             .insert(WindowWrapper::new(winit_window))
-            .into_mut())
+            .into_mut()
     }
 
     /// Get the winit window that is associated with our entity.

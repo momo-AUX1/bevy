@@ -59,6 +59,8 @@ pub fn convert_physical_native_key_code(
         winit::keyboard::NativeKeyCode::MacOS(scan_code) => NativeKeyCode::MacOS(scan_code),
         winit::keyboard::NativeKeyCode::Windows(scan_code) => NativeKeyCode::Windows(scan_code),
         winit::keyboard::NativeKeyCode::Xkb(key_code) => NativeKeyCode::Xkb(key_code),
+        // Bevy doesn't currently expose an OHOS-native scancode, so treat it as unidentified.
+        winit::keyboard::NativeKeyCode::Ohos(_scan_code) => NativeKeyCode::Unidentified,
         // winit's key enums are `#[non_exhaustive]`. Don't crash on new/unknown keys.
         _ => NativeKeyCode::Unidentified,
     }
@@ -615,6 +617,8 @@ pub fn convert_native_key(native_key: &NativeKey) -> bevy_input::keyboard::Nativ
         NativeKey::MacOS(v) => bevy_input::keyboard::NativeKey::MacOS(*v),
         NativeKey::Windows(v) => bevy_input::keyboard::NativeKey::Windows(*v),
         NativeKey::Xkb(v) => bevy_input::keyboard::NativeKey::Xkb(*v),
+        // Bevy doesn't currently expose an OHOS-native keycode, so treat it as unidentified.
+        NativeKey::Ohos(_v) => bevy_input::keyboard::NativeKey::Unidentified,
         // winit and bevy may depend on different `smol_str` versions; convert via `&str`.
         NativeKey::Web(v) => bevy_input::keyboard::NativeKey::Web(v.as_str().into()),
         // winit's key enums are `#[non_exhaustive]`. Don't crash on new/unknown keys.
