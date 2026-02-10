@@ -17,14 +17,32 @@ use std::{
 };
 
 pub(crate) fn get_base_path() -> PathBuf {
-    if let Ok(manifest_dir) = env::var("BEVY_ASSET_ROOT") {
-        PathBuf::from(manifest_dir)
-    } else if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-        PathBuf::from(manifest_dir)
-    } else {
-        env::current_exe()
-            .map(|path| path.parent().map(ToOwned::to_owned).unwrap())
-            .unwrap()
+    // WinRT/UWP apps are sandboxed. Relative paths should resolve under LocalState by default.
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    {
+        if let Ok(root) = env::var("BEVY_ASSET_ROOT") {
+            let root = PathBuf::from(root);
+            if root.is_absolute() {
+                root
+            } else {
+                winrt_local_state_dir().join(root)
+            }
+        } else {
+            winrt_local_state_dir()
+        }
+    }
+
+    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+    {
+        if let Ok(manifest_dir) = env::var("BEVY_ASSET_ROOT") {
+            PathBuf::from(manifest_dir)
+        } else if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            PathBuf::from(manifest_dir)
+        } else {
+            env::current_exe()
+                .map(|path| path.parent().map(ToOwned::to_owned).unwrap())
+                .unwrap()
+        }
     }
 }
 
@@ -33,6 +51,8 @@ pub(crate) fn get_base_path() -> PathBuf {
 /// This asset I/O is fully featured but it's not available on `android` and `wasm` targets.
 pub struct FileAssetReader {
     root_path: PathBuf,
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    fallback_root_path: Option<PathBuf>,
 }
 
 impl FileAssetReader {
@@ -42,11 +62,17 @@ impl FileAssetReader {
     /// See `get_base_path` below.
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         let root_path = Self::get_base_path().join(path.as_ref());
+        #[cfg(all(target_os = "windows", __WINRT__))]
+        let fallback_root_path = winrt_installed_location_dir().map(|p| p.join(path.as_ref()));
         debug!(
             "Asset Server using {} as its base path.",
             root_path.display()
         );
-        Self { root_path }
+        Self {
+            root_path,
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            fallback_root_path,
+        }
     }
 
     /// Returns the base path of the assets directory, which is normally the executable's parent
@@ -62,6 +88,11 @@ impl FileAssetReader {
     /// See `get_base_path`.
     pub fn root_path(&self) -> &PathBuf {
         &self.root_path
+    }
+
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    pub(crate) fn fallback_root_path(&self) -> Option<&PathBuf> {
+        self.fallback_root_path.as_ref()
     }
 }
 
@@ -84,4 +115,28 @@ impl FileAssetWriter {
         }
         Self { root_path }
     }
+}
+
+#[cfg(all(target_os = "windows", __WINRT__))]
+pub(crate) fn winrt_local_state_dir() -> PathBuf {
+    use windows::Storage::ApplicationData;
+
+    ApplicationData::Current()
+        .ok()
+        .and_then(|data| data.LocalFolder().ok())
+        .and_then(|folder| folder.Path().ok())
+        .map(|path| PathBuf::from(path.to_string()))
+        // If WinRT APIs aren't available for some reason, fall back to a relative path.
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(all(target_os = "windows", __WINRT__))]
+pub(crate) fn winrt_installed_location_dir() -> Option<PathBuf> {
+    use windows::ApplicationModel::Package;
+
+    Package::Current()
+        .ok()
+        .and_then(|package| package.InstalledLocation().ok())
+        .and_then(|folder| folder.Path().ok())
+        .map(|path| PathBuf::from(path.to_string()))
 }

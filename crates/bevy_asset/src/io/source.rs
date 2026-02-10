@@ -530,11 +530,12 @@ impl AssetSource {
         any(
             not(feature = "file_watcher"),
             target_arch = "wasm32",
-            target_os = "android"
+            target_os = "android",
+            all(target_os = "windows", __WINRT__)
         ),
         expect(
             unused_variables,
-            reason = "The `path` and `file_debounce_wait_time` arguments are unused when on WASM, Android, or if the `file_watcher` feature is disabled."
+            reason = "The `path` and `file_debounce_wait_time` arguments are unused when on WASM, Android, WinRT/UWP, or if the `file_watcher` feature is disabled."
         )
     )]
     pub fn get_default_watcher(
@@ -546,7 +547,8 @@ impl AssetSource {
             #[cfg(all(
                 feature = "file_watcher",
                 not(target_arch = "wasm32"),
-                not(target_os = "android")
+                not(target_os = "android"),
+                not(all(target_os = "windows", __WINRT__))
             ))]
             {
                 let path = super::file::get_base_path().join(path.clone());
@@ -569,7 +571,8 @@ impl AssetSource {
             #[cfg(any(
                 not(feature = "file_watcher"),
                 target_arch = "wasm32",
-                target_os = "android"
+                target_os = "android",
+                all(target_os = "windows", __WINRT__)
             ))]
             return None;
         }

@@ -229,6 +229,19 @@ mod web_asset_cache {
 
     const CACHE_DIR: &str = ".web-asset-cache";
 
+    fn cache_dir_path() -> PathBuf {
+        #[cfg(all(target_os = "windows", __WINRT__))]
+        {
+            // WinRT/UWP apps are sandboxed: store the cache under LocalState.
+            crate::io::file::winrt_local_state_dir().join(CACHE_DIR)
+        }
+
+        #[cfg(not(all(target_os = "windows", __WINRT__)))]
+        {
+            PathBuf::from(CACHE_DIR)
+        }
+    }
+
     fn url_to_hash(url: &str) -> String {
         let mut hasher = DefaultHasher::new();
         url.hash(&mut hasher);
@@ -237,7 +250,7 @@ mod web_asset_cache {
 
     pub async fn try_load_from_cache(url: &str) -> Result<Option<Vec<u8>>, io::Error> {
         let filename = url_to_hash(url);
-        let cache_path = PathBuf::from(CACHE_DIR).join(&filename);
+        let cache_path = cache_dir_path().join(&filename);
 
         if cache_path.exists() {
             let mut file = async_fs::File::open(&cache_path).await?;
@@ -251,9 +264,10 @@ mod web_asset_cache {
 
     pub async fn save_to_cache(url: &str, data: &[u8]) -> Result<(), io::Error> {
         let filename = url_to_hash(url);
-        let cache_path = PathBuf::from(CACHE_DIR).join(&filename);
+        let cache_dir = cache_dir_path();
+        let cache_path = cache_dir.join(&filename);
 
-        async_fs::create_dir_all(CACHE_DIR).await.ok();
+        async_fs::create_dir_all(&cache_dir).await.ok();
 
         let mut cache_file = async_fs::File::create(&cache_path).await?;
         cache_file.write_all(data).await?;

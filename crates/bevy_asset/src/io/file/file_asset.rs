@@ -16,7 +16,7 @@ use core::marker::PhantomData;
 use core::time::Duration;
 #[cfg(not(target_os = "windows"))]
 use futures_util::{future, pin_mut};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{FileAssetReader, FileAssetWriter};
 
@@ -77,22 +77,44 @@ impl AssetReader for FileAssetReader {
         let _guard = maybe_get_semaphore().await;
 
         let full_path = self.root_path.join(path);
-        File::open(&full_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    AssetReaderError::NotFound(full_path)
-                } else {
-                    e.into()
-                }
-            })
-            .map(|file| GuardedFile {
+        match File::open(&full_path).await {
+            Ok(file) => Ok(GuardedFile {
                 file,
                 #[cfg(not(target_os = "windows"))]
                 _guard,
                 #[cfg(target_os = "windows")]
                 _lifetime: PhantomData,
-            })
+            }),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if let Some(fallback_root) = self.fallback_root_path() {
+                        let fallback_path = fallback_root.join(path);
+                        match File::open(&fallback_path).await {
+                            Ok(file) => {
+                                return Ok(GuardedFile {
+                                    file,
+                                    #[cfg(not(target_os = "windows"))]
+                                    _guard,
+                                    #[cfg(target_os = "windows")]
+                                    _lifetime: PhantomData,
+                                });
+                            }
+                            Err(e) => {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    return Err(e.into());
+                                }
+                            }
+                        }
+                    }
+
+                    Err(AssetReaderError::NotFound(full_path))
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
@@ -101,22 +123,44 @@ impl AssetReader for FileAssetReader {
 
         let meta_path = get_meta_path(path);
         let full_path = self.root_path.join(meta_path);
-        File::open(&full_path)
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    AssetReaderError::NotFound(full_path)
-                } else {
-                    e.into()
-                }
-            })
-            .map(|file| GuardedFile {
+        match File::open(&full_path).await {
+            Ok(file) => Ok(GuardedFile {
                 file,
                 #[cfg(not(target_os = "windows"))]
                 _guard,
                 #[cfg(target_os = "windows")]
                 _lifetime: PhantomData,
-            })
+            }),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if let Some(fallback_root) = self.fallback_root_path() {
+                        let fallback_path = fallback_root.join(meta_path);
+                        match File::open(&fallback_path).await {
+                            Ok(file) => {
+                                return Ok(GuardedFile {
+                                    file,
+                                    #[cfg(not(target_os = "windows"))]
+                                    _guard,
+                                    #[cfg(target_os = "windows")]
+                                    _lifetime: PhantomData,
+                                });
+                            }
+                            Err(e) => {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    return Err(e.into());
+                                }
+                            }
+                        }
+                    }
+
+                    Err(AssetReaderError::NotFound(full_path))
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn read_directory<'a>(
@@ -124,36 +168,53 @@ impl AssetReader for FileAssetReader {
         path: &'a Path,
     ) -> Result<Box<PathStream>, AssetReaderError> {
         let full_path = self.root_path.join(path);
+        async fn map_dir(
+            read_dir: async_fs::ReadDir,
+            root_path: PathBuf,
+        ) -> Result<Box<PathStream>, AssetReaderError> {
+            let mapped_stream = read_dir.filter_map(move |f| {
+                f.ok().and_then(|dir_entry| {
+                    let path = dir_entry.path();
+                    // filter out meta files as they are not considered assets
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                        && ext.eq_ignore_ascii_case("meta")
+                    {
+                        return None;
+                    }
+                    // filter out hidden files. they are not listed by default but are directly targetable
+                    if path
+                        .file_name()
+                        .and_then(|file_name| file_name.to_str())
+                        .map(|file_name| file_name.starts_with('.'))
+                        .unwrap_or_default()
+                    {
+                        return None;
+                    }
+                    let relative_path = path.strip_prefix(&root_path).ok()?;
+                    Some(relative_path.to_owned())
+                })
+            });
+            Ok(Box::new(mapped_stream))
+        }
+
         match read_dir(&full_path).await {
-            Ok(read_dir) => {
-                let root_path = self.root_path.clone();
-                let mapped_stream = read_dir.filter_map(move |f| {
-                    f.ok().and_then(|dir_entry| {
-                        let path = dir_entry.path();
-                        // filter out meta files as they are not considered assets
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str())
-                            && ext.eq_ignore_ascii_case("meta")
-                        {
-                            return None;
-                        }
-                        // filter out hidden files. they are not listed by default but are directly targetable
-                        if path
-                            .file_name()
-                            .and_then(|file_name| file_name.to_str())
-                            .map(|file_name| file_name.starts_with('.'))
-                            .unwrap_or_default()
-                        {
-                            return None;
-                        }
-                        let relative_path = path.strip_prefix(&root_path).unwrap();
-                        Some(relative_path.to_owned())
-                    })
-                });
-                let read_dir: Box<PathStream> = Box::new(mapped_stream);
-                Ok(read_dir)
-            }
+            Ok(read_dir) => map_dir(read_dir, self.root_path.clone()).await,
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
+                    // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if let Some(fallback_root) = self.fallback_root_path() {
+                        let fallback_full_path = fallback_root.join(path);
+                        match read_dir(&fallback_full_path).await {
+                            Ok(read_dir) => return map_dir(read_dir, fallback_root.clone()).await,
+                            Err(e) => {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    return Err(e.into());
+                                }
+                            }
+                        }
+                    }
+
                     Err(AssetReaderError::NotFound(full_path))
                 } else {
                     Err(e.into())
@@ -164,10 +225,30 @@ impl AssetReader for FileAssetReader {
 
     async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
         let full_path = self.root_path.join(path);
-        let metadata = full_path
-            .metadata()
-            .map_err(|_e| AssetReaderError::NotFound(path.to_owned()))?;
-        Ok(metadata.file_type().is_dir())
+        match full_path.metadata() {
+            Ok(metadata) => Ok(metadata.file_type().is_dir()),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if let Some(fallback_root) = self.fallback_root_path() {
+                        let fallback_path = fallback_root.join(path);
+                        match fallback_path.metadata() {
+                            Ok(metadata) => return Ok(metadata.file_type().is_dir()),
+                            Err(e) => {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    return Err(e.into());
+                                }
+                            }
+                        }
+                    }
+
+                    Err(AssetReaderError::NotFound(path.to_owned()))
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 }
 
