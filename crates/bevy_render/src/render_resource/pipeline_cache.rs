@@ -237,6 +237,12 @@ impl PipelineCache {
             global_shader_defs.push("NO_CUBE_ARRAY_TEXTURES_SUPPORT".into());
             global_shader_defs.push("SIXTEEN_BYTE_ALIGNMENT".into());
         }
+        #[cfg(all(target_os = "windows", __WINRT__))]
+        {
+            // Some WinRT/UWP downlevel backends (notably ANGLE/GLES) require uniform buffer binding
+            // types to have 16-byte sizes, matching the WebGL2 constraint.
+            global_shader_defs.push("SIXTEEN_BYTE_ALIGNMENT".into());
+        }
 
         if cfg!(target_abi = "sim") {
             global_shader_defs.push("NO_CUBE_ARRAY_TEXTURES_SUPPORT".into());

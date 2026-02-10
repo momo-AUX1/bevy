@@ -85,11 +85,20 @@ pub fn extract_skybox(
         let uniforms = SkyboxUniforms {
             brightness: skybox.brightness * exposure,
             transform: Transform::from_rotation(skybox.rotation.inverse()).to_matrix(),
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_8b: 0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_12b: 0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_16b: 0,
         };
         values.push((entity, (skybox.clone(), uniforms)));
@@ -103,11 +112,20 @@ pub fn extract_skybox(
 pub struct SkyboxUniforms {
     brightness: f32,
     transform: Mat4,
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_8b: u32,
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_12b: u32,
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_16b: u32,
 }
 

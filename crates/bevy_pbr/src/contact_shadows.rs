@@ -64,8 +64,11 @@ pub struct ContactShadowsUniform {
     pub linear_steps: u32,
     pub thickness: f32,
     pub length: f32,
-    // Some backends (notably GLES / WebGL2-style uniform buffer layouts) require buffer binding
-    // sizes to be 16-byte aligned.
+    // Some downlevel backends require uniform buffer binding sizes to be 16-byte aligned.
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     pub _padding: f32,
 }
 
@@ -75,6 +78,10 @@ impl From<ContactShadows> for ContactShadowsUniform {
             linear_steps: settings.linear_steps,
             thickness: settings.thickness,
             length: settings.length,
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _padding: 0.0,
         }
     }

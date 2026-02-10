@@ -63,7 +63,10 @@ pub(crate) fn extract_linegizmos(
                 joints_resolution,
                 gap_scale,
                 line_scale,
-                #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+                #[cfg(any(
+                    all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                    all(target_os = "windows", __WINRT__),
+                ))]
                 _webgl2_padding: Default::default(),
             },
             #[cfg(any(feature = "bevy_pbr", feature = "bevy_sprite_render"))]

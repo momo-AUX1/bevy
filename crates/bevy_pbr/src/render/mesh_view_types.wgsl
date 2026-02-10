@@ -186,9 +186,11 @@ struct ContactShadowsSettings {
     linear_steps: u32,
     thickness: f32,
     length: f32,
+#ifdef SIXTEEN_BYTE_ALIGNMENT
     // Some backends (notably GLES / WebGL2-style uniform buffer layouts) require buffer binding
     // sizes to be 16-byte aligned.
     _padding: f32,
+#endif
 };
 
 struct EnvironmentMapUniform {

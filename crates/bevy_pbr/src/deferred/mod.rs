@@ -47,11 +47,20 @@ pub const DEFAULT_PBR_DEFERRED_LIGHTING_PASS_ID: u8 = 1;
 pub struct PbrDeferredLightingDepthId {
     depth_id: u32,
 
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_0: f32,
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_1: f32,
-    #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+    #[cfg(any(
+        all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+        all(target_os = "windows", __WINRT__),
+    ))]
     _webgl2_padding_2: f32,
 }
 
@@ -60,11 +69,20 @@ impl PbrDeferredLightingDepthId {
         PbrDeferredLightingDepthId {
             depth_id: value as u32,
 
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_0: 0.0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_1: 0.0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_2: 0.0,
         }
     }
@@ -83,11 +101,20 @@ impl Default for PbrDeferredLightingDepthId {
         PbrDeferredLightingDepthId {
             depth_id: DEFAULT_PBR_DEFERRED_LIGHTING_PASS_ID as u32,
 
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_0: 0.0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_1: 0.0,
-            #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
+            #[cfg(any(
+                all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")),
+                all(target_os = "windows", __WINRT__),
+            ))]
             _webgl2_padding_2: 0.0,
         }
     }
