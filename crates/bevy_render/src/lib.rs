@@ -111,6 +111,9 @@ use render_asset::{
 use settings::RenderResources;
 use std::sync::Mutex;
 
+#[cfg(all(target_os = "windows", __WINRT__))]
+use bevy_ecs::schedule::{ExecutorKind, Schedules};
+
 /// Contains the default Bevy rendering backend based on wgpu.
 ///
 /// Rendering is done in a [`SubApp`](bevy_app::SubApp), which exchanges data with the main app
@@ -328,6 +331,31 @@ impl Plugin for RenderPlugin {
                     reset_render_asset_bytes_per_frame.in_set(RenderSystems::Cleanup),
                 ),
             );
+
+            // WinRT/UWP window surfaces (CoreWindow) are effectively UI-thread-bound. If the render
+            // schedules are allowed to run in the multi-threaded executor, surface creation,
+            // (re)configuration, and presentation can run on worker threads, which manifests as:
+            // - EGL `BadSurface` / "Invalid surface" (ANGLE / GLES)
+            // - Black screen with no obvious error (DX12)
+            //
+            // For now we force the RenderApp schedules to single-threaded execution on WinRT to
+            // keep all surface operations on the UI thread that drives the winit event loop.
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            {
+                let mut schedules = render_app.world_mut().resource_mut::<Schedules>();
+                if let Some(schedule) = schedules.get_mut(ExtractSchedule) {
+                    schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+                }
+                if let Some(schedule) = schedules.get_mut(RenderStartup) {
+                    schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+                }
+                if let Some(schedule) = schedules.get_mut(RenderRecovery) {
+                    schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+                }
+                if let Some(schedule) = schedules.get_mut(Render) {
+                    schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+                }
+            }
         }
     }
 
