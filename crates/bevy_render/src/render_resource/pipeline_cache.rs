@@ -231,6 +231,17 @@ impl PipelineCache {
         synchronous_pipeline_compilation: bool,
     ) -> Self {
         let mut global_shader_defs = Vec::new();
+
+        // Cache/adjust downlevel flags early so all WinRT/GLES workarounds stay consistent.
+        let mut downlevel_flags = render_adapter.get_downlevel_capabilities().flags;
+        #[cfg(all(target_os = "windows", __WINRT__))]
+        {
+            // WinRT uses ANGLE/GLES which targets GLSL ES 3.00. Cube array textures require GLSL ES 3.10,
+            // so treat them as unsupported even if the backend reports otherwise.
+            if render_adapter.get_info().backend.to_str() == "gl" {
+                downlevel_flags.set(DownlevelFlags::CUBE_ARRAY_TEXTURES, false);
+            }
+        }
         #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
         {
             global_shader_defs.push("NO_ARRAY_TEXTURES_SUPPORT".into());
@@ -244,11 +255,7 @@ impl PipelineCache {
             global_shader_defs.push("SIXTEEN_BYTE_ALIGNMENT".into());
 
             // ANGLE/GLES often does not support cube map arrays.
-            if !render_adapter
-                .get_downlevel_capabilities()
-                .flags
-                .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES)
-            {
+            if !downlevel_flags.contains(DownlevelFlags::CUBE_ARRAY_TEXTURES) {
                 global_shader_defs.push("NO_CUBE_ARRAY_TEXTURES_SUPPORT".into());
             }
         }
@@ -266,7 +273,7 @@ impl PipelineCache {
             shader_cache: Arc::new(Mutex::new(ShaderCache::new(
                 device.clone(),
                 device.features(),
-                render_adapter.get_downlevel_capabilities().flags,
+                downlevel_flags,
                 load_module,
             ))),
             device,

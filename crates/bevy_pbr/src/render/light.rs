@@ -859,10 +859,18 @@ pub fn prepare_lights(
     let mut directional_lights: Vec<_> = directional_lights.iter().collect::<Vec<_>>();
 
     #[cfg(all(target_os = "windows", __WINRT__))]
-    let cube_array_textures_supported = render_adapter
-        .get_downlevel_capabilities()
-        .flags
-        .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES);
+    let cube_array_textures_supported = {
+        // WinRT uses ANGLE/GLES which targets GLSL ES 3.00. Cube array textures require GLSL ES 3.10,
+        // so force single-cubemap shadows on the GL backend even if the backend reports otherwise.
+        if render_adapter.get_info().backend.to_str() == "gl" {
+            false
+        } else {
+            render_adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES)
+        }
+    };
 
     #[cfg(any(
         not(feature = "webgl"),

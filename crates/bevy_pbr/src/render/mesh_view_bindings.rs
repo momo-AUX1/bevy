@@ -259,7 +259,11 @@ pub fn layout_entries(
                 {
                     #[cfg(all(target_os = "windows", __WINRT__))]
                     {
-                        if render_adapter
+                        // WinRT uses ANGLE/GLES which targets GLSL ES 3.00. Cube array textures
+                        // require GLSL ES 3.10, so force the non-array fallback on the GL backend.
+                        if render_adapter.get_info().backend.to_str() == "gl" {
+                            texture_cube(TextureSampleType::Depth)
+                        } else if render_adapter
                             .get_downlevel_capabilities()
                             .flags
                             .contains(DownlevelFlags::CUBE_ARRAY_TEXTURES)
