@@ -560,30 +560,37 @@ impl WinitAppRunnerState {
                 if let Ok((entity, window, cursor_options)) = query.single(&self.world()) {
                     let window = window.clone();
                     let cursor_options = cursor_options.clone();
+                    let Some(monitors) = self
+                        .world()
+                        .get_resource::<crate::WinitMonitors>()
+                        .map(|m| crate::WinitMonitors {
+                            monitors: m.monitors.clone(),
+                        })
+                    else {
+                        warn!("WinitMonitors resource missing while recreating the window on Android resume");
+                        return;
+                    };
 
                     WINIT_WINDOWS.with_borrow_mut(|winit_windows| {
-                        ACCESS_KIT_ADAPTERS.with_borrow_mut(|adapters| {
-                            let mut create_window =
-                                SystemState::<CreateWindowParams>::from_world(self.world_mut());
-
-                            let (.., mut handlers, accessibility_requested, monitors) =
-                                create_window.get_mut(self.world_mut());
-
-                            let winit_window = winit_windows.create_window(
-                                event_loop,
-                                entity,
-                                &window,
-                                &cursor_options,
-                                adapters,
-                                &mut handlers,
-                                &accessibility_requested,
-                                &monitors,
-                            );
-
-                            let wrapper = RawHandleWrapper::new(winit_window).unwrap();
-
-                            self.world_mut().entity_mut(entity).insert(wrapper);
-                        });
+                        match winit_windows.create_window(
+                            event_loop,
+                            entity,
+                            &window,
+                            &cursor_options,
+                            &monitors,
+                        ) {
+                            Ok(winit_window) => match RawHandleWrapper::new(winit_window) {
+                                Ok(wrapper) => {
+                                    self.world_mut().entity_mut(entity).insert(wrapper);
+                                }
+                                Err(err) => {
+                                    warn!("Failed to create raw handle wrapper on Android resume: {err}");
+                                }
+                            },
+                            Err(err) => {
+                                warn!("Failed to recreate winit window on Android resume: {err}");
+                            }
+                        }
                     });
                 }
             }
