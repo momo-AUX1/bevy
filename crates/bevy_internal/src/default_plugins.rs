@@ -47,7 +47,10 @@ plugin_group! {
         #[cfg(feature = "bevy_light")]
         bevy_light:::LightPlugin,
         #[cfg(feature = "bevy_render")]
-        #[custom(cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded")))]
+        // WinRT/UWP's windowing + surface lifecycle is effectively UI-thread bound (CoreWindow),
+        // so Bevy's render thread (pipelined rendering) can end up presenting to a surface from
+        // the wrong thread, resulting in a black screen.
+        #[custom(cfg(all(not(target_arch = "wasm32"), feature = "multi_threaded", not(__WINRT__))))]
         bevy_render::pipelined_rendering:::PipelinedRenderingPlugin,
         #[cfg(feature = "bevy_core_pipeline")]
         bevy_core_pipeline:::CorePipelinePlugin,
