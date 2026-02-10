@@ -125,6 +125,9 @@ indexmap = { version = "2" }
 fixedbitset = { version = "0.5" }
 bitflags = "2"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = ["Storage"] }
+
 [target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
 send_wrapper = { version = "0.6.0" }
 

@@ -36,7 +36,7 @@ use bevy_utils::default;
 use bevy_window::{PrimaryWindow, WindowRef};
 use core::ops::Deref;
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{Receiver, Sender},
         Mutex,
@@ -50,6 +50,34 @@ pub struct ScreenshotCaptured {
     pub entity: Entity,
     #[deref]
     pub image: Image,
+}
+
+#[cfg(all(target_os = "windows", __WINRT__))]
+fn winrt_local_state_dir() -> PathBuf {
+    use windows::Storage::ApplicationData;
+
+    ApplicationData::Current()
+        .ok()
+        .and_then(|data| data.LocalFolder().ok())
+        .and_then(|folder| folder.Path().ok())
+        .map(|path| PathBuf::from(path.to_string()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn resolve_screenshot_path(path: &Path) -> PathBuf {
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    {
+        if path.is_absolute() {
+            path.to_owned()
+        } else {
+            winrt_local_state_dir().join(path)
+        }
+    }
+
+    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+    {
+        path.to_owned()
+    }
 }
 
 /// A component that signals to the renderer to capture a screenshot this frame.
@@ -134,6 +162,7 @@ struct RenderScreenshotsSender(Sender<(Entity, Image)>);
 pub fn save_to_disk(path: impl AsRef<Path>) -> impl FnMut(On<ScreenshotCaptured>) {
     let path = path.as_ref().to_owned();
     move |screenshot_captured| {
+        let path = resolve_screenshot_path(&path);
         let img = screenshot_captured.image.clone();
         match img.try_into_dynamic() {
             Ok(dyn_img) => match image::ImageFormat::from_path(&path) {
@@ -142,9 +171,23 @@ pub fn save_to_disk(path: impl AsRef<Path>) -> impl FnMut(On<ScreenshotCaptured>
                     // the screenshot looks right
                     let img = dyn_img.to_rgb8();
                     #[cfg(not(target_arch = "wasm32"))]
-                    match img.save_with_format(&path, format) {
-                        Ok(_) => info!("Screenshot saved to {}", path.display()),
-                        Err(e) => error!("Cannot save screenshot, IO error: {e}"),
+                    {
+                        if let Some(parent) =
+                            path.parent().filter(|p| !p.as_os_str().is_empty())
+                        {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                error!(
+                                    "Cannot save screenshot, failed to create directory {}: {e}",
+                                    parent.display()
+                                );
+                                return;
+                            }
+                        }
+
+                        match img.save_with_format(&path, format) {
+                            Ok(_) => info!("Screenshot saved to {}", path.display()),
+                            Err(e) => error!("Cannot save screenshot, IO error: {e}"),
+                        }
                     }
 
                     #[cfg(target_arch = "wasm32")]
