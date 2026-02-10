@@ -74,7 +74,7 @@ pub fn create_windows(
                 Err(err) => {
                     #[cfg(all(target_os = "windows", __WINRT__))]
                     {
-                        if matches!(err, winit::error::RequestError::NotSupported) {
+                        if matches!(err, winit::error::RequestError::NotSupported(_)) {
                             warn!(
                                 "WinRT/UWP supports only a single window. Ignoring additional window request for entity {entity}"
                             );
@@ -211,6 +211,16 @@ pub fn create_monitors(
     event_loop: &dyn ActiveEventLoop,
     (mut commands, mut monitors): SystemParamItem<CreateMonitorParams>,
 ) {
+    // The WinRT/UWP backend only reports a single synthetic monitor and relies on
+    // view-specific APIs (`DisplayInformation::GetForCurrentView`) that can be unavailable very
+    // early in startup on some devices (notably Xbox). Bevy doesn't require monitor entities for
+    // core windowing on WinRT, so skip the sync entirely to avoid boot-time failures.
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    {
+        let _ = (event_loop, commands, monitors);
+        return;
+    }
+
     let primary_monitor = event_loop.primary_monitor();
     let mut seen_monitors = vec![false; monitors.monitors.len()];
 
@@ -359,29 +369,34 @@ pub(crate) fn changed_windows(
                         ))))
                     }
                     WindowMode::Fullscreen(monitor_selection, video_mode_selection) => {
-                        let monitor = select_monitor(
+                        match select_monitor(
                             &monitors,
                             winit_window.primary_monitor(),
                             winit_window.current_monitor(),
                             &monitor_selection,
-                        )
-                        .unwrap_or_else(|| {
-                            panic!("Could not find monitor for {monitor_selection:?}")
-                        });
-
-                        if let Some(video_mode) =
-                            get_selected_videomode(&monitor, &video_mode_selection)
-                        {
-                            Some(Some(winit::monitor::Fullscreen::Exclusive(
-                                monitor.clone(),
-                                video_mode,
-                            )))
-                        } else {
-                            warn!(
-                                "Could not find valid fullscreen video mode for {:?} {:?}",
-                                monitor_selection, video_mode_selection
-                            );
-                            None
+                        ) {
+                            Some(monitor) => {
+                                if let Some(video_mode) =
+                                    get_selected_videomode(&monitor, &video_mode_selection)
+                                {
+                                    Some(Some(winit::monitor::Fullscreen::Exclusive(
+                                        monitor.clone(),
+                                        video_mode,
+                                    )))
+                                } else {
+                                    warn!(
+                                        "Could not find valid fullscreen video mode for {:?} {:?}",
+                                        monitor_selection, video_mode_selection
+                                    );
+                                    None
+                                }
+                            }
+                            None => {
+                                warn!(
+                                    "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
+                                );
+                                Some(Some(winit::monitor::Fullscreen::Borderless(None)))
+                            }
                         }
                     }
                     WindowMode::Windowed => Some(None),
@@ -445,7 +460,7 @@ pub(crate) fn changed_windows(
 
                     if let Err(err) = winit_window.set_cursor_position(position.into()) {
                         #[cfg(all(target_os = "windows", __WINRT__))]
-                        if matches!(err, winit::error::RequestError::NotSupported) {
+                        if matches!(err, winit::error::RequestError::NotSupported(_)) {
                             // Expected on WinRT/UWP.
                         } else {
                             error!("could not set cursor position: {}", err);
@@ -492,6 +507,7 @@ pub(crate) fn changed_windows(
                 );
             }
 
+            #[cfg(not(all(target_os = "windows", __WINRT__)))]
             if window.position != cache.position
                 && let Some(position) = crate::winit_window_position(
                     &window.position,
@@ -499,16 +515,17 @@ pub(crate) fn changed_windows(
                     &monitors,
                     winit_window.primary_monitor(),
                     winit_window.current_monitor(),
-                ) {
-                    let should_set = match winit_window.outer_position() {
-                        Ok(current_position) => current_position != position,
-                        _ => true,
-                    };
+                )
+            {
+                let should_set = match winit_window.outer_position() {
+                    Ok(current_position) => current_position != position,
+                    _ => true,
+                };
 
-                    if should_set {
-                        winit_window.set_outer_position(position.into());
-                    }
+                if should_set {
+                    winit_window.set_outer_position(position.into());
                 }
+            }
 
             if let Some(maximized) = window.internal.take_maximize_request() {
                 winit_window.set_maximized(maximized);
@@ -521,7 +538,7 @@ pub(crate) fn changed_windows(
             if window.internal.take_move_request()
                 && let Err(e) = winit_window.drag_window() {
                     #[cfg(all(target_os = "windows", __WINRT__))]
-                    if matches!(e, winit::error::RequestError::NotSupported) {
+                    if matches!(e, winit::error::RequestError::NotSupported(_)) {
                         // Expected on WinRT/UWP.
                     } else {
                         warn!("Winit returned an error while attempting to drag the window: {e}");
@@ -535,7 +552,7 @@ pub(crate) fn changed_windows(
                     winit_window.drag_resize_window(convert_resize_direction(resize_direction))
                 {
                     #[cfg(all(target_os = "windows", __WINRT__))]
-                    if matches!(e, winit::error::RequestError::NotSupported) {
+                    if matches!(e, winit::error::RequestError::NotSupported(_)) {
                         // Expected on WinRT/UWP.
                     } else {
                         warn!("Winit returned an error while attempting to drag resize the window: {e}");
@@ -675,7 +692,7 @@ pub(crate) fn changed_cursor_options(
                     }
                     Err(err) => {
                         #[cfg(all(target_os = "windows", __WINRT__))]
-                        if matches!(err, winit::error::RequestError::NotSupported) {
+                        if matches!(err, winit::error::RequestError::NotSupported(_)) {
                             // Expected on WinRT/UWP: treat as a no-op and avoid repeated attempts.
                             cache.hit_test = cursor_options.hit_test;
                         } else {

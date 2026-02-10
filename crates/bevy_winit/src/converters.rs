@@ -59,6 +59,8 @@ pub fn convert_physical_native_key_code(
         winit::keyboard::NativeKeyCode::MacOS(scan_code) => NativeKeyCode::MacOS(scan_code),
         winit::keyboard::NativeKeyCode::Windows(scan_code) => NativeKeyCode::Windows(scan_code),
         winit::keyboard::NativeKeyCode::Xkb(key_code) => NativeKeyCode::Xkb(key_code),
+        // winit's key enums are `#[non_exhaustive]`. Don't crash on new/unknown keys.
+        _ => NativeKeyCode::Unidentified,
     }
 }
 /// Converts a [`winit::keyboard::PhysicalKey`] to a Bevy [`KeyCode`]
@@ -615,6 +617,8 @@ pub fn convert_native_key(native_key: &NativeKey) -> bevy_input::keyboard::Nativ
         NativeKey::Xkb(v) => bevy_input::keyboard::NativeKey::Xkb(*v),
         // winit and bevy may depend on different `smol_str` versions; convert via `&str`.
         NativeKey::Web(v) => bevy_input::keyboard::NativeKey::Web(v.as_str().into()),
+        // winit's key enums are `#[non_exhaustive]`. Don't crash on new/unknown keys.
+        _ => bevy_input::keyboard::NativeKey::Unidentified,
     }
 }
 

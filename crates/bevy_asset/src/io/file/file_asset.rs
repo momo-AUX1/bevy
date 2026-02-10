@@ -122,7 +122,7 @@ impl AssetReader for FileAssetReader {
         let _guard = maybe_get_semaphore().await;
 
         let meta_path = get_meta_path(path);
-        let full_path = self.root_path.join(meta_path);
+        let full_path = self.root_path.join(&meta_path);
         match File::open(&full_path).await {
             Ok(file) => Ok(GuardedFile {
                 file,
@@ -136,7 +136,7 @@ impl AssetReader for FileAssetReader {
                     // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
                     #[cfg(all(target_os = "windows", __WINRT__))]
                     if let Some(fallback_root) = self.fallback_root_path() {
-                        let fallback_path = fallback_root.join(meta_path);
+                        let fallback_path = fallback_root.join(&meta_path);
                         match File::open(&fallback_path).await {
                             Ok(file) => {
                                 return Ok(GuardedFile {

@@ -62,54 +62,76 @@ impl WinitWindows {
         // avoid panics elsewhere.
         #[cfg(all(target_os = "windows", __WINRT__))]
         if !self.windows.is_empty() {
-            return Err(RequestError::NotSupported);
+            return Err(
+                winit::error::NotSupportedError::new("WinRT/UWP supports only a single window")
+                    .into(),
+            );
         }
 
         let mut winit_window_attributes = winit::window::WindowAttributes::default();
 
-        let maybe_selected_monitor = &match window.mode {
-            WindowMode::BorderlessFullscreen(monitor_selection)
-            | WindowMode::Fullscreen(monitor_selection, _) => select_monitor(
-                monitors,
-                event_loop.primary_monitor(),
-                None,
-                &monitor_selection,
-            ),
-            WindowMode::Windowed => None,
+        let maybe_selected_monitor = {
+            // WinRT/UWP only supports a single synthetic monitor in the initial backend and
+            // monitor queries can fail early during app boot on some devices. Avoid calling
+            // monitor APIs here: borderless fullscreen does not require an explicit monitor.
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            {
+                None
+            }
+
+            #[cfg(not(all(target_os = "windows", __WINRT__)))]
+            {
+                match window.mode {
+                    WindowMode::BorderlessFullscreen(monitor_selection)
+                    | WindowMode::Fullscreen(monitor_selection, _) => select_monitor(
+                        monitors,
+                        event_loop.primary_monitor(),
+                        None,
+                        &monitor_selection,
+                    ),
+                    WindowMode::Windowed => None,
+                }
+            }
         };
 
         winit_window_attributes = match window.mode {
             WindowMode::BorderlessFullscreen(_) => winit_window_attributes
                 .with_fullscreen(Some(Fullscreen::Borderless(maybe_selected_monitor.clone()))),
             WindowMode::Fullscreen(monitor_selection, video_mode_selection) => {
-                let select_monitor = &maybe_selected_monitor
-                    .clone()
-                    .expect("Unable to get monitor.");
-
-                if let Some(video_mode) =
-                    get_selected_videomode(select_monitor, &video_mode_selection)
-                {
-                    winit_window_attributes.with_fullscreen(Some(Fullscreen::Exclusive(
-                        select_monitor.clone(),
-                        video_mode,
-                    )))
+                if let Some(select_monitor) = maybe_selected_monitor.clone() {
+                    if let Some(video_mode) =
+                        get_selected_videomode(&select_monitor, &video_mode_selection)
+                    {
+                        winit_window_attributes.with_fullscreen(Some(Fullscreen::Exclusive(
+                            select_monitor.clone(),
+                            video_mode,
+                        )))
+                    } else {
+                        warn!(
+                            "Could not find valid fullscreen video mode for {:?} {:?}",
+                            monitor_selection, video_mode_selection
+                        );
+                        winit_window_attributes
+                    }
                 } else {
                     warn!(
-                        "Could not find valid fullscreen video mode for {:?} {:?}",
-                        monitor_selection, video_mode_selection
+                        "Could not find monitor for {monitor_selection:?}; falling back to borderless fullscreen"
                     );
-                    winit_window_attributes
+                    winit_window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
                 }
             }
             WindowMode::Windowed => {
-                if let Some(position) = winit_window_position(
-                    &window.position,
-                    &window.resolution,
-                    monitors,
-                    event_loop.primary_monitor(),
-                    None,
-                ) {
-                    winit_window_attributes = winit_window_attributes.with_position(position);
+                #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                {
+                    if let Some(position) = winit_window_position(
+                        &window.position,
+                        &window.resolution,
+                        monitors,
+                        event_loop.primary_monitor(),
+                        None,
+                    ) {
+                        winit_window_attributes = winit_window_attributes.with_position(position);
+                    }
                 }
                 let logical_size = LogicalSize::new(window.width(), window.height());
                 if let Some(sf) = window.resolution.scale_factor_override() {
@@ -315,7 +337,7 @@ impl WinitWindows {
         if !cursor_options.hit_test {
             if let Err(err) = winit_window.set_cursor_hittest(cursor_options.hit_test) {
                 #[cfg(all(target_os = "windows", __WINRT__))]
-                if matches!(err, RequestError::NotSupported) {
+                if matches!(err, RequestError::NotSupported(_)) {
                     // Expected on WinRT/UWP.
                 } else {
                     warn!(
@@ -423,7 +445,7 @@ pub(crate) fn attempt_grab(
         Ok(()) => Ok(()),
         Err(err) => {
             #[cfg(all(target_os = "windows", __WINRT__))]
-            if matches!(err, RequestError::NotSupported) {
+            if matches!(err, RequestError::NotSupported(_)) {
                 // Expected no-op / NotSupported on WinRT/UWP.
                 return Ok(());
             }

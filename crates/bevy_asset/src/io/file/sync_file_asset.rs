@@ -129,7 +129,7 @@ impl AssetReader for FileAssetReader {
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let meta_path = get_meta_path(path);
-        let full_path = self.root_path.join(meta_path);
+        let full_path = self.root_path.join(&meta_path);
         match File::open(&full_path) {
             Ok(file) => Ok(FileReader(file)),
             Err(e) => {
@@ -137,7 +137,7 @@ impl AssetReader for FileAssetReader {
                     // On WinRT/UWP, prefer LocalState but fall back to packaged assets.
                     #[cfg(all(target_os = "windows", __WINRT__))]
                     if let Some(fallback_root) = self.fallback_root_path() {
-                        let fallback_path = fallback_root.join(meta_path);
+                        let fallback_path = fallback_root.join(&meta_path);
                         match File::open(&fallback_path) {
                             Ok(file) => return Ok(FileReader(file)),
                             Err(e) => {

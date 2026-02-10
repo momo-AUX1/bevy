@@ -10,6 +10,7 @@ mod sync_file_asset;
 pub use file_watcher::*;
 use tracing::{debug, error};
 
+#[cfg(not(all(target_os = "windows", __WINRT__)))]
 use alloc::borrow::ToOwned;
 use std::{
     env,
@@ -125,7 +126,7 @@ pub(crate) fn winrt_local_state_dir() -> PathBuf {
         .ok()
         .and_then(|data| data.LocalFolder().ok())
         .and_then(|folder| folder.Path().ok())
-        .map(|path| PathBuf::from(path.to_string()))
+        .map(|path| PathBuf::from(path.to_os_string()))
         // If WinRT APIs aren't available for some reason, fall back to a relative path.
         .unwrap_or_else(|| PathBuf::from("."))
 }
@@ -138,5 +139,5 @@ pub(crate) fn winrt_installed_location_dir() -> Option<PathBuf> {
         .ok()
         .and_then(|package| package.InstalledLocation().ok())
         .and_then(|folder| folder.Path().ok())
-        .map(|path| PathBuf::from(path.to_string()))
+        .map(|path| PathBuf::from(path.to_os_string()))
 }
