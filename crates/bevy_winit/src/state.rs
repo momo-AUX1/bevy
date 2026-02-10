@@ -19,6 +19,7 @@ use bevy_platform::time::Instant;
 use bevy_tasks::tick_global_task_pools_on_main_thread;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::EventLoopExtWebSys;
+use std::sync::mpsc;
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -38,7 +39,6 @@ use bevy_window::{
 use bevy_window::{CursorOptions, PrimaryWindow, RawHandleWrapper};
 
 use crate::{
-    accessibility::ACCESS_KIT_ADAPTERS,
     converters, create_windows,
     system::{create_monitors, CachedWindow, WinitWindowPressedKeys},
     AppSendEvent, CreateMonitorParams, CreateWindowParams, RawWinitWindowEvent, UpdateMode,
@@ -52,6 +52,8 @@ pub(crate) struct WinitAppRunnerState {
     app: App,
     /// Exit value once the loop is finished.
     app_exit: Option<AppExit>,
+    /// Cross-thread events queued by Bevy systems/observers.
+    user_event_receiver: mpsc::Receiver<WinitUserEvent>,
     /// Current update mode of the app.
     update_mode: UpdateMode,
     /// Is `true` if a new [`WindowEvent`] event has been received since the last update.
@@ -97,7 +99,7 @@ pub(crate) struct WinitAppRunnerState {
 }
 
 impl WinitAppRunnerState {
-    fn new(mut app: App) -> Self {
+    fn new(mut app: App, user_event_receiver: mpsc::Receiver<WinitUserEvent>) -> Self {
         let message_writer_system_state: SystemState<(
             MessageWriter<WindowResized>,
             MessageWriter<WindowBackendScaleFactorChanged>,
@@ -110,6 +112,7 @@ impl WinitAppRunnerState {
             lifecycle: AppLifecycle::Idle,
             previous_lifecycle: AppLifecycle::Idle,
             app_exit: None,
+            user_event_receiver,
             update_mode: UpdateMode::Continuous,
             window_event_received: false,
             device_event_received: false,
@@ -141,8 +144,8 @@ impl WinitAppRunnerState {
     }
 }
 
-impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+impl ApplicationHandler for WinitAppRunnerState {
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
         if event_loop.exiting() {
             return;
         }
@@ -174,7 +177,7 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
         };
     }
 
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         // Mark the state as `WillResume`. This will let the schedule run one extra time
         // when actually resuming the app
         self.lifecycle = AppLifecycle::WillResume;
@@ -185,25 +188,35 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
         create_window.apply(self.world_mut());
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WinitUserEvent) {
-        self.user_event_received = true;
+    fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let mut saw_event = false;
+        loop {
+            let event = match self.user_event_receiver.try_recv() {
+                Ok(event) => event,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            };
 
-        match event {
-            WinitUserEvent::WakeUp => {
-                self.redraw_requested = true;
-            }
-            WinitUserEvent::WindowAdded => {
-                let mut create_window =
-                    SystemState::<CreateWindowParams>::from_world(self.world_mut());
-                create_windows(event_loop, create_window.get_mut(self.world_mut()));
-                create_window.apply(self.world_mut());
-            }
+            saw_event = true;
+            match event {
+                WinitUserEvent::WakeUp => self.redraw_requested = true,
+                WinitUserEvent::WindowAdded => {
+                    let mut create_window =
+                        SystemState::<CreateWindowParams>::from_world(self.world_mut());
+                    create_windows(event_loop, create_window.get_mut(self.world_mut()));
+                    create_window.apply(self.world_mut());
+                }
+            };
+        }
+
+        if saw_event {
+            self.user_event_received = true;
         }
     }
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        _event_loop: &dyn ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -216,15 +229,14 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
         let mut manual_run_redraw_requested = false;
 
         WINIT_WINDOWS.with_borrow(|winit_windows| {
-            ACCESS_KIT_ADAPTERS.with_borrow_mut(|access_kit_adapters| {
-                let (
-                    mut window_resized,
-                    mut window_backend_scale_factor_changed,
-                    mut window_scale_factor_changed,
-                    mut windows,
-                ) = self
-                    .message_writer_system_state
-                    .get_mut(self.app.world_mut());
+            let (
+                mut window_resized,
+                mut window_backend_scale_factor_changed,
+                mut window_scale_factor_changed,
+                mut windows,
+            ) = self
+                .message_writer_system_state
+                .get_mut(self.app.world_mut());
 
                 let Some(window) = winit_windows.get_window_entity(window_id) else {
                     warn!("Skipped event {event:?} for unknown winit Window Id {window_id:?}");
@@ -244,16 +256,8 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                     event: event.clone(),
                 });
 
-                // Allow AccessKit to respond to `WindowEvent`s before they reach
-                // the engine.
-                if let Some(adapter) = access_kit_adapters.get_mut(&window)
-                    && let Some(winit_window) = winit_windows.get_window(window)
-                {
-                    adapter.process_event(winit_window, &event);
-                }
-
                 match event {
-                    WindowEvent::Resized(size) => {
+                    WindowEvent::SurfaceResized(size) => {
                         react_to_resize(window, &mut win, size, &mut window_resized);
                     }
                     WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -288,7 +292,7 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                         }
                         self.bevy_window_events.send(keyboard_input);
                     }
-                    WindowEvent::CursorMoved { position, .. } => {
+                    WindowEvent::PointerMoved { position, .. } => {
                         let physical_position = DVec2::new(position.x, position.y);
 
                         let last_position = win.physical_cursor_position();
@@ -305,19 +309,21 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                             delta,
                         });
                     }
-                    WindowEvent::CursorEntered { .. } => {
+                    WindowEvent::PointerEntered { .. } => {
                         self.bevy_window_events.send(CursorEntered { window });
                     }
-                    WindowEvent::CursorLeft { .. } => {
+                    WindowEvent::PointerLeft { .. } => {
                         win.set_physical_cursor_position(None);
                         self.bevy_window_events.send(CursorLeft { window });
                     }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        self.bevy_window_events.send(MouseButtonInput {
-                            button: converters::convert_mouse_button(button),
-                            state: converters::convert_element_state(state),
-                            window,
-                        });
+                    WindowEvent::PointerButton { state, button, .. } => {
+                        if let Some(button) = button.mouse_button() {
+                            self.bevy_window_events.send(MouseButtonInput {
+                                button: converters::convert_mouse_button(button),
+                                state: converters::convert_element_state(state),
+                                window,
+                            });
+                        }
                     }
                     WindowEvent::PinchGesture { delta, .. } => {
                         self.bevy_window_events.send(PinchGesture(delta as f32));
@@ -352,13 +358,6 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                             });
                         }
                     },
-                    WindowEvent::Touch(touch) => {
-                        let location = touch
-                            .location
-                            .to_logical(win.resolution.scale_factor() as f64);
-                        self.bevy_window_events
-                            .send(converters::convert_touch_input(touch, location, window));
-                    }
                     WindowEvent::Focused(focused) => {
                         win.focused = focused;
                         self.bevy_window_events
@@ -368,15 +367,19 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                         self.bevy_window_events
                             .send(WindowOccluded { window, occluded });
                     }
-                    WindowEvent::DroppedFile(path_buf) => {
-                        self.bevy_window_events
-                            .send(FileDragAndDrop::DroppedFile { window, path_buf });
+                    WindowEvent::DragEntered { paths, .. } => {
+                        for path_buf in paths {
+                            self.bevy_window_events
+                                .send(FileDragAndDrop::HoveredFile { window, path_buf });
+                        }
                     }
-                    WindowEvent::HoveredFile(path_buf) => {
-                        self.bevy_window_events
-                            .send(FileDragAndDrop::HoveredFile { window, path_buf });
+                    WindowEvent::DragDropped { paths, .. } => {
+                        for path_buf in paths {
+                            self.bevy_window_events
+                                .send(FileDragAndDrop::DroppedFile { window, path_buf });
+                        }
                     }
-                    WindowEvent::HoveredFileCancelled => {
+                    WindowEvent::DragLeft { .. } => {
                         self.bevy_window_events
                             .send(FileDragAndDrop::HoveredFileCanceled { window });
                     }
@@ -400,6 +403,7 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                         event::Ime::Enabled => {
                             self.bevy_window_events.send(Ime::Enabled { window });
                         }
+                        event::Ime::DeleteSurrounding { .. } => {}
                         event::Ime::Disabled => {
                             self.bevy_window_events.send(Ime::Disabled { window });
                         }
@@ -435,7 +439,6 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
                 {
                     **cache = window_component.clone();
                 }
-            });
         });
 
         if manual_run_redraw_requested {
@@ -445,19 +448,19 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
 
     fn device_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
-        _device_id: DeviceId,
+        _event_loop: &dyn ActiveEventLoop,
+        _device_id: Option<DeviceId>,
         event: DeviceEvent,
     ) {
         self.device_event_received = true;
 
-        if let DeviceEvent::MouseMotion { delta: (x, y) } = event {
+        if let DeviceEvent::PointerMotion { delta: (x, y) } = event {
             let delta = Vec2::new(x as f32, y as f32);
             self.bevy_window_events.send(MouseMotion { delta });
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         let mut create_monitor = SystemState::<CreateMonitorParams>::from_world(self.world_mut());
         create_monitors(event_loop, create_monitor.get_mut(self.world_mut()));
         create_monitor.apply(self.world_mut());
@@ -492,24 +495,16 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
         }
     }
 
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+    fn suspended(&mut self, _event_loop: &dyn ActiveEventLoop) {
         // Mark the state as `WillSuspend`. This will let the schedule run one last time
         // before actually suspending to let the application react
         self.lifecycle = AppLifecycle::WillSuspend;
     }
 
-    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // Drop windows while event loop is still active, before TLS destruction.
-        // Prevents panic on macOS when exiting from exclusive fullscreen.
-        WINIT_WINDOWS.with(|ww| ww.borrow_mut().windows.clear());
-
-        let world = self.world_mut();
-        world.clear_all();
-    }
 }
 
 impl WinitAppRunnerState {
-    fn redraw_requested(&mut self, event_loop: &ActiveEventLoop) {
+    fn redraw_requested(&mut self, event_loop: &dyn ActiveEventLoop) {
         let mut redraw_message_cursor = MessageCursor::<RequestRedraw>::default();
         let mut close_message_cursor = MessageCursor::<WindowCloseRequested>::default();
 
@@ -880,13 +875,17 @@ impl WinitAppRunnerState {
 ///
 /// Overriding the app's [runner](bevy_app::App::runner) while using `WinitPlugin` will bypass the
 /// `EventLoop`.
-pub fn winit_runner(mut app: App, event_loop: EventLoop<WinitUserEvent>) -> AppExit {
+pub fn winit_runner(
+    mut app: App,
+    mut event_loop: EventLoop,
+    user_event_receiver: mpsc::Receiver<WinitUserEvent>,
+) -> AppExit {
     if app.plugins_state() == PluginsState::Ready {
         app.finish();
         app.cleanup();
     }
 
-    let runner_state = WinitAppRunnerState::new(app);
+    let runner_state = WinitAppRunnerState::new(app, user_event_receiver);
 
     trace!("starting winit event loop");
     // The winit docs mention using `spawn` instead of `run` on Wasm.
@@ -895,11 +894,21 @@ pub fn winit_runner(mut app: App, event_loop: EventLoop<WinitUserEvent>) -> AppE
         if #[cfg(target_arch = "wasm32")] {
             event_loop.spawn_app(runner_state);
             AppExit::Success
+        } else if #[cfg(all(target_os = "windows", __WINRT__))] {
+            use winit::event_loop::never_return::EventLoopExtNeverReturn;
+            event_loop.run_app_never_return(runner_state)
         } else {
+            use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
+
             let mut runner_state = runner_state;
-            if let Err(err) = event_loop.run_app(&mut runner_state) {
+            if let Err(err) = event_loop.run_app_on_demand(&mut runner_state) {
                 bevy_log::error!("winit event loop returned an error: {err}");
             }
+
+            // Drop windows while event loop is still active, before TLS destruction.
+            // Prevents panic on macOS when exiting from exclusive fullscreen.
+            WINIT_WINDOWS.with(|ww| ww.borrow_mut().windows.clear());
+
             // If everything is working correctly then the event loop only exits after it's sent an exit code.
             runner_state.app_exit.unwrap_or_else(|| {
                 bevy_log::error!("Failed to receive an app exit code! This is a bug");
@@ -915,6 +924,14 @@ pub(crate) fn react_to_resize(
     size: PhysicalSize<u32>,
     window_resized: &mut MessageWriter<WindowResized>,
 ) {
+    // WinRT can transiently report a 0x0 surface size (for example if a SizeChanged payload
+    // fails to resolve). Treat that as "unknown" and keep the last good size so we don't end up
+    // rendering forever at 1x1.
+    #[cfg(all(target_os = "windows", __WINRT__))]
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
+
     window
         .resolution
         .set_physical_resolution(size.width, size.height);

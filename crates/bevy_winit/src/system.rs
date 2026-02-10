@@ -31,7 +31,6 @@ use winit::platform::ios::WindowExtIOS;
 use winit::platform::web::WindowExtWebSys;
 
 use crate::{
-    accessibility::ACCESS_KIT_ADAPTERS,
     converters::{
         convert_enabled_buttons, convert_resize_direction, convert_window_level,
         convert_window_theme, convert_winit_theme,
@@ -48,84 +47,117 @@ use crate::{
 /// If any of these entities are missing required components, those will be added with their
 /// default values.
 pub fn create_windows(
-    event_loop: &ActiveEventLoop,
+    event_loop: &dyn ActiveEventLoop,
     (
         mut commands,
         mut created_windows,
         mut window_created_events,
-        mut handlers,
-        accessibility_requested,
         monitors,
     ): SystemParamItem<CreateWindowParams>,
 ) {
     WINIT_WINDOWS.with_borrow_mut(|winit_windows| {
-        ACCESS_KIT_ADAPTERS.with_borrow_mut(|adapters| {
-            for (entity, mut window, cursor_options, handle_holder) in &mut created_windows {
-                if winit_windows.get_window(entity).is_some() {
-                    continue;
-                }
-
-                info!("Creating new window {} ({})", window.title.as_str(), entity);
-
-                let winit_window = winit_windows.create_window(
-                    event_loop,
-                    entity,
-                    &window,
-                    cursor_options,
-                    adapters,
-                    &mut handlers,
-                    &accessibility_requested,
-                    &monitors,
-                );
-
-                if let Some(theme) = winit_window.theme() {
-                    window.window_theme = Some(convert_winit_theme(theme));
-                }
-
-                window
-                    .resolution
-                    .set_scale_factor_and_apply_to_physical_size(winit_window.scale_factor() as f32);
-
-                commands.entity(entity).insert((
-                    CachedWindow(window.clone()),
-                    CachedCursorOptions(cursor_options.clone()),
-                    WinitWindowPressedKeys::default(),
-                ));
-
-                if let Ok(handle_wrapper) = RawHandleWrapper::new(winit_window) {
-                    commands.entity(entity).insert(handle_wrapper.clone());
-                    if let Some(handle_holder) = handle_holder {
-                        *handle_holder.0.lock().unwrap() = Some(handle_wrapper);
-                    }
-                }
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if window.fit_canvas_to_parent {
-                        let canvas = winit_window
-                            .canvas()
-                            .expect("window.canvas() can only be called in main thread.");
-                        let style = canvas.style();
-                        style.set_property("width", "100%").unwrap();
-                        style.set_property("height", "100%").unwrap();
-                    }
-                }
-
-                #[cfg(target_os = "ios")]
-                {
-                    winit_window.recognize_pinch_gesture(window.recognize_pinch_gesture);
-                    winit_window.recognize_rotation_gesture(window.recognize_rotation_gesture);
-                    winit_window.recognize_doubletap_gesture(window.recognize_doubletap_gesture);
-                    if let Some((min, max)) = window.recognize_pan_gesture {
-                        winit_window.recognize_pan_gesture(true, min, max);
-                    } else {
-                        winit_window.recognize_pan_gesture(false, 0, 0);
-                    }
-                }
-
-                window_created_events.write(WindowCreated { window: entity });
+        for (entity, mut window, cursor_options, handle_holder) in &mut created_windows {
+            if winit_windows.get_window(entity).is_some() {
+                continue;
             }
-        });
+
+            info!("Creating new window {} ({})", window.title.as_str(), entity);
+
+            let winit_window = match winit_windows.create_window(
+                event_loop,
+                entity,
+                &window,
+                cursor_options,
+                &monitors,
+            ) {
+                Ok(winit_window) => winit_window,
+                Err(err) => {
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    {
+                        if matches!(err, winit::error::RequestError::NotSupported) {
+                            warn!(
+                                "WinRT/UWP supports only a single window. Ignoring additional window request for entity {entity}"
+                            );
+                        } else {
+                            warn!(
+                                "Failed to create winit window for entity {entity} on WinRT/UWP: {err}"
+                            );
+                        }
+
+                        // Avoid leaving a phantom `Window` around when window creation is rejected.
+                        commands.entity(entity).remove::<Window>();
+                        continue;
+                    }
+
+                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                    panic!("Failed to create winit window: {err}");
+                }
+            };
+
+            if let Some(theme) = winit_window.theme() {
+                window.window_theme = Some(convert_winit_theme(theme));
+            }
+
+            window
+                .resolution
+                .set_scale_factor_and_apply_to_physical_size(winit_window.scale_factor() as f32);
+
+            // On WinRT/UWP the system owns the CoreWindow size; seed Bevy's resolution from the
+            // actual surface size to avoid starting (or falling back) to 1x1 rendering.
+            #[cfg(all(target_os = "windows", __WINRT__))]
+            {
+                let size = winit_window.surface_size();
+                let (width, height) = if size.width == 0 || size.height == 0 {
+                    // WinRT can report a transient 0x0 size during startup. Using the default
+                    // Bevy size here can lead to a swapchain config that blocks or fails on UWP.
+                    // Use a safe minimum until a real `SurfaceResized` arrives.
+                    (1, 1)
+                } else {
+                    (size.width, size.height)
+                };
+
+                window.resolution.set_physical_resolution(width, height);
+            }
+
+            commands.entity(entity).insert((
+                CachedWindow(window.clone()),
+                CachedCursorOptions(cursor_options.clone()),
+                WinitWindowPressedKeys::default(),
+            ));
+
+            if let Ok(handle_wrapper) = RawHandleWrapper::new(winit_window) {
+                commands.entity(entity).insert(handle_wrapper.clone());
+                if let Some(handle_holder) = handle_holder {
+                    *handle_holder.0.lock().unwrap() = Some(handle_wrapper);
+                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                if window.fit_canvas_to_parent {
+                    let canvas = winit_window
+                        .canvas()
+                        .expect("window.canvas() can only be called in main thread.");
+                    let style = canvas.style();
+                    style.set_property("width", "100%").unwrap();
+                    style.set_property("height", "100%").unwrap();
+                }
+            }
+
+            #[cfg(target_os = "ios")]
+            {
+                winit_window.recognize_pinch_gesture(window.recognize_pinch_gesture);
+                winit_window.recognize_rotation_gesture(window.recognize_rotation_gesture);
+                winit_window.recognize_doubletap_gesture(window.recognize_doubletap_gesture);
+                if let Some((min, max)) = window.recognize_pan_gesture {
+                    winit_window.recognize_pan_gesture(true, min, max);
+                } else {
+                    winit_window.recognize_pan_gesture(false, 0, 0);
+                }
+            }
+
+            window_created_events.write(WindowCreated { window: entity });
+        }
     });
 }
 
@@ -176,7 +208,7 @@ pub(crate) fn check_keyboard_focus_lost(
 
 /// Synchronize available monitors as reported by [`winit`] with [`Monitor`] entities in the world.
 pub fn create_monitors(
-    event_loop: &ActiveEventLoop,
+    event_loop: &dyn ActiveEventLoop,
     (mut commands, mut monitors): SystemParamItem<CreateMonitorParams>,
 ) {
     let primary_monitor = event_loop.primary_monitor();
@@ -190,16 +222,19 @@ pub fn create_monitors(
             }
         }
 
-        let size = monitor.size();
-        let position = monitor.position();
+        let (size, refresh_rate_millihertz) = match monitor.current_video_mode() {
+            Some(vm) => (vm.size(), vm.refresh_rate_millihertz().map(|r| r.get())),
+            None => (PhysicalSize::new(0, 0), None),
+        };
+        let position = monitor.position().unwrap_or_else(|| PhysicalPosition::new(0, 0));
 
         let entity = commands
             .spawn(Monitor {
-                name: monitor.name(),
+                name: monitor.name().map(|n| n.into_owned()),
                 physical_height: size.height,
                 physical_width: size.width,
                 physical_position: IVec2::new(position.x, position.y),
-                refresh_rate_millihertz: monitor.refresh_rate_millihertz(),
+                refresh_rate_millihertz,
                 scale_factor: monitor.scale_factor(),
                 video_modes: monitor
                     .video_modes()
@@ -207,8 +242,8 @@ pub fn create_monitors(
                         let size = v.size();
                         VideoMode {
                             physical_size: UVec2::new(size.width, size.height),
-                            bit_depth: v.bit_depth(),
-                            refresh_rate_millihertz: v.refresh_rate_millihertz(),
+                            bit_depth: v.bit_depth().map(|d| d.get()).unwrap_or(0),
+                            refresh_rate_millihertz: v.refresh_rate_millihertz().map(|r| r.get()).unwrap_or(0),
                         }
                     })
                     .collect(),
@@ -243,7 +278,7 @@ pub(crate) fn despawn_windows(
     window_entities: Query<Entity, With<Window>>,
     mut closing_event_writer: MessageWriter<WindowClosing>,
     mut closed_event_writer: MessageWriter<WindowClosed>,
-    mut windows_to_drop: Local<Vec<WindowWrapper<winit::window::Window>>>,
+    mut windows_to_drop: Local<Vec<WindowWrapper<Box<dyn winit::window::Window>>>>,
     mut exit_event_reader: MessageReader<AppExit>,
     _non_send_marker: NonSendMarker,
 ) {
@@ -316,7 +351,7 @@ pub(crate) fn changed_windows(
             if window.mode != cache.mode {
                 let new_mode = match window.mode {
                     WindowMode::BorderlessFullscreen(monitor_selection) => {
-                        Some(Some(winit::window::Fullscreen::Borderless(select_monitor(
+                        Some(Some(winit::monitor::Fullscreen::Borderless(select_monitor(
                             &monitors,
                             winit_window.primary_monitor(),
                             winit_window.current_monitor(),
@@ -324,7 +359,7 @@ pub(crate) fn changed_windows(
                         ))))
                     }
                     WindowMode::Fullscreen(monitor_selection, video_mode_selection) => {
-                        let monitor = &select_monitor(
+                        let monitor = select_monitor(
                             &monitors,
                             winit_window.primary_monitor(),
                             winit_window.current_monitor(),
@@ -334,9 +369,13 @@ pub(crate) fn changed_windows(
                             panic!("Could not find monitor for {monitor_selection:?}")
                         });
 
-                        if let Some(video_mode) = get_selected_videomode(monitor, &video_mode_selection)
+                        if let Some(video_mode) =
+                            get_selected_videomode(&monitor, &video_mode_selection)
                         {
-                            Some(Some(winit::window::Fullscreen::Exclusive(video_mode)))
+                            Some(Some(winit::monitor::Fullscreen::Exclusive(
+                                monitor.clone(),
+                                video_mode,
+                            )))
                         } else {
                             warn!(
                                 "Could not find valid fullscreen video mode for {:?} {:?}",
@@ -393,7 +432,9 @@ pub(crate) fn changed_windows(
                 }
 
                 if physical_size != cached_physical_size
-                    && let Some(new_physical_size) = winit_window.request_inner_size(physical_size) {
+                    && let Some(new_physical_size) =
+                        winit_window.request_surface_size(physical_size.into())
+                {
                         react_to_resize(entity, &mut window, new_physical_size, &mut window_resized);
                     }
             }
@@ -402,7 +443,14 @@ pub(crate) fn changed_windows(
                 && let Some(physical_position) = window.physical_cursor_position() {
                     let position = PhysicalPosition::new(physical_position.x, physical_position.y);
 
-                    if let Err(err) = winit_window.set_cursor_position(position) {
+                    if let Err(err) = winit_window.set_cursor_position(position.into()) {
+                        #[cfg(all(target_os = "windows", __WINRT__))]
+                        if matches!(err, winit::error::RequestError::NotSupported) {
+                            // Expected on WinRT/UWP.
+                        } else {
+                            error!("could not set cursor position: {}", err);
+                        }
+                        #[cfg(not(all(target_os = "windows", __WINRT__)))]
                         error!("could not set cursor position: {}", err);
                     }
                 }
@@ -434,10 +482,10 @@ pub(crate) fn changed_windows(
                     height: constraints.max_height,
                 };
 
-                winit_window.set_min_inner_size(Some(min_inner_size));
-                winit_window.set_max_inner_size(
+                winit_window.set_min_surface_size(Some(min_inner_size.into()));
+                winit_window.set_max_surface_size(
                     if constraints.max_width.is_finite() && constraints.max_height.is_finite() {
-                        Some(max_inner_size)
+                        Some(max_inner_size.into())
                     } else {
                         None
                     },
@@ -458,7 +506,7 @@ pub(crate) fn changed_windows(
                     };
 
                     if should_set {
-                        winit_window.set_outer_position(position);
+                        winit_window.set_outer_position(position.into());
                     }
                 }
 
@@ -472,6 +520,13 @@ pub(crate) fn changed_windows(
 
             if window.internal.take_move_request()
                 && let Err(e) = winit_window.drag_window() {
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if matches!(e, winit::error::RequestError::NotSupported) {
+                        // Expected on WinRT/UWP.
+                    } else {
+                        warn!("Winit returned an error while attempting to drag the window: {e}");
+                    }
+                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
                     warn!("Winit returned an error while attempting to drag the window: {e}");
                 }
 
@@ -479,6 +534,13 @@ pub(crate) fn changed_windows(
                 && let Err(e) =
                     winit_window.drag_resize_window(convert_resize_direction(resize_direction))
                 {
+                    #[cfg(all(target_os = "windows", __WINRT__))]
+                    if matches!(e, winit::error::RequestError::NotSupported) {
+                        // Expected on WinRT/UWP.
+                    } else {
+                        warn!("Winit returned an error while attempting to drag resize the window: {e}");
+                    }
+                    #[cfg(not(all(target_os = "windows", __WINRT__)))]
                     warn!("Winit returned an error while attempting to drag resize the window: {e}");
                 }
 
@@ -510,8 +572,8 @@ pub(crate) fn changed_windows(
 
             if window.ime_position != cache.ime_position {
                 winit_window.set_ime_cursor_area(
-                    LogicalPosition::new(window.ime_position.x, window.ime_position.y),
-                    PhysicalSize::new(10, 10),
+                    LogicalPosition::new(window.ime_position.x, window.ime_position.y).into(),
+                    PhysicalSize::new(10, 10).into(),
                 );
             }
 
@@ -590,7 +652,7 @@ pub(crate) fn changed_cursor_options(
             };
             // Don't check the cache for the grab mode. It can change through external means, leaving the cache outdated.
             if let Err(err) =
-                crate::winit_windows::attempt_grab(winit_window, cursor_options.grab_mode)
+                crate::winit_windows::attempt_grab(winit_window.as_ref(), cursor_options.grab_mode)
             {
                 warn!(
                     "Could not set cursor grab mode for window {}: {}",
@@ -607,14 +669,31 @@ pub(crate) fn changed_cursor_options(
             }
 
             if cursor_options.hit_test != cache.hit_test {
-                if let Err(err) = winit_window.set_cursor_hittest(cursor_options.hit_test) {
-                    warn!(
-                        "Could not set cursor hit test for window {}: {}",
-                        window.title, err
-                    );
-                    cursor_options.hit_test = cache.hit_test;
-                } else {
-                    cache.hit_test = cursor_options.hit_test;
+                match winit_window.set_cursor_hittest(cursor_options.hit_test) {
+                    Ok(()) => {
+                        cache.hit_test = cursor_options.hit_test;
+                    }
+                    Err(err) => {
+                        #[cfg(all(target_os = "windows", __WINRT__))]
+                        if matches!(err, winit::error::RequestError::NotSupported) {
+                            // Expected on WinRT/UWP: treat as a no-op and avoid repeated attempts.
+                            cache.hit_test = cursor_options.hit_test;
+                        } else {
+                            warn!(
+                                "Could not set cursor hit test for window {}: {}",
+                                window.title, err
+                            );
+                            cursor_options.hit_test = cache.hit_test;
+                        }
+                        #[cfg(not(all(target_os = "windows", __WINRT__)))]
+                        {
+                            warn!(
+                                "Could not set cursor hit test for window {}: {}",
+                                window.title, err
+                            );
+                            cursor_options.hit_test = cache.hit_test;
+                        }
+                    }
                 }
             }
         }

@@ -45,9 +45,9 @@ pub enum CursorSource {
     CustomCached(CustomCursorCacheKey),
     #[cfg(feature = "custom_cursor")]
     /// A custom cursor was not cached, so it needs to be created by the winit event loop.
-    Custom((CustomCursorCacheKey, winit::window::CustomCursorSource)),
+    Custom((CustomCursorCacheKey, winit::cursor::CustomCursorSource)),
     /// A system cursor was requested.
-    System(winit::window::CursorIcon),
+    System(winit::cursor::CursorIcon),
 }
 
 /// Component that indicates what cursor should be used for a window. Inserted
@@ -59,7 +59,7 @@ pub struct PendingCursor(pub Option<CursorSource>);
 impl WinitAppRunnerState {
     pub(crate) fn update_cursors(
         &mut self,
-        #[cfg(feature = "custom_cursor")] event_loop: &ActiveEventLoop,
+        #[cfg(feature = "custom_cursor")] event_loop: &dyn ActiveEventLoop,
     ) {
         #[cfg(feature = "custom_cursor")]
         let mut windows_state: SystemState<(
@@ -84,7 +84,7 @@ impl WinitAppRunnerState {
                     continue;
                 };
 
-                let final_cursor: winit::window::Cursor = match pending_cursor {
+                let final_cursor: winit::cursor::Cursor = match pending_cursor {
                     #[cfg(feature = "custom_cursor")]
                     CursorSource::CustomCached(cache_key) => {
                         let Some(cached_cursor) = cursor_cache.0.get(&cache_key) else {
@@ -95,7 +95,13 @@ impl WinitAppRunnerState {
                     }
                     #[cfg(feature = "custom_cursor")]
                     CursorSource::Custom((cache_key, cursor)) => {
-                        let custom_cursor = event_loop.create_custom_cursor(cursor);
+                        let custom_cursor = match event_loop.create_custom_cursor(cursor) {
+                            Ok(cursor) => cursor,
+                            Err(err) => {
+                                tracing::warn!("Failed to create custom cursor: {err}");
+                                continue;
+                            }
+                        };
                         cursor_cache.0.insert(cache_key, custom_cursor.clone());
                         custom_cursor.into()
                     }
@@ -169,7 +175,7 @@ fn update_cursors(
                         continue;
                     };
 
-                    let source = match winit::window::CustomCursor::from_rgba(
+                    let source = match winit::cursor::CustomCursorSource::from_rgba(
                         rgba,
                         rect.width() as u16,
                         rect.height() as u16,
@@ -196,18 +202,18 @@ fn update_cursors(
                         CursorSource::CustomCached(cache_key)
                     } else {
                         use crate::CustomCursorExtWebSys;
-                        let source = winit::window::CustomCursor::from_url(
-                            _c.url.clone(),
-                            _c.hotspot.0,
-                            _c.hotspot.1,
-                        );
+                        let source = winit::cursor::CustomCursorSource::Url {
+                            url: _c.url.clone(),
+                            hotspot_x: _c.hotspot.0,
+                            hotspot_y: _c.hotspot.1,
+                        };
                         CursorSource::Custom((cache_key, source))
                     }
                 }
                 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
                 {
                     bevy_log::error_once!("CustomCursor::Url is not supported on this platform. Falling back to CursorIcon::System(SystemCursorIcon::Default)");
-                    CursorSource::System(winit::window::CursorIcon::Default)
+                    CursorSource::System(winit::cursor::CursorIcon::Default)
                 }
             }
             CursorIcon::System(system_cursor_icon) => {
