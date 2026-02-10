@@ -13,11 +13,6 @@ default = ["x11"]
 trace = []
 wayland = ["winit/wayland", "winit/wayland-csd-adwaita"]
 x11 = ["winit/x11"]
-accesskit_unix = [
-  "accesskit_winit/accesskit_unix",
-  "accesskit_winit/async-io",
-  "bevy_tasks/async-io",
-]
 
 serialize = [
   "bevy_input/serialize",
@@ -62,14 +57,10 @@ wgpu-types = { version = "28", optional = true }
 bytemuck = { version = "1.5", optional = true }
 
 # other
-# feature rwh_06 refers to window_raw_handle@v0.6
-winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
-accesskit_winit = { version = "0.31", default-features = false, features = [
-  "rwh_06",
-] }
+# winit 0.31 contains the WinRT/UWP backend we need for CoreWindow.
+winit = { version = "0.31.0-beta.2", default-features = false }
 approx = { version = "0.5", default-features = false }
 cfg-if = "1.0"
-accesskit = "0.23"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

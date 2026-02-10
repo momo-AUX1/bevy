@@ -18,9 +18,9 @@ use bevy_derive::Deref;
 use bevy_reflect::Reflect;
 use bevy_window::{RawHandleWrapperHolder, WindowEvent};
 use core::cell::RefCell;
+use std::sync::mpsc;
 use winit::{event_loop::EventLoop, window::WindowId};
 
-use bevy_a11y::AccessibilityRequested;
 use bevy_app::{App, Last, Plugin};
 use bevy_ecs::prelude::*;
 use bevy_window::{exit_on_all_closed, CursorOptions, Window, WindowCreated};
@@ -30,18 +30,13 @@ pub use system::{create_monitors, create_windows};
 pub use winit::platform::web::CustomCursorExtWebSys;
 pub use winit::{
     event_loop::EventLoopProxy,
-    window::{CustomCursor as WinitCustomCursor, CustomCursorSource},
 };
+pub use winit::cursor::{CustomCursor as WinitCustomCursor, CustomCursorSource};
 pub use winit_config::*;
 pub use winit_monitors::*;
 pub use winit_windows::*;
 
-use crate::{
-    accessibility::{AccessKitPlugin, WinitActionRequestHandlers},
-    state::winit_runner,
-};
-
-pub mod accessibility;
+use crate::state::winit_runner;
 pub mod converters;
 mod cursor;
 mod state;
@@ -88,7 +83,7 @@ impl Plugin for WinitPlugin {
     }
 
     fn build(&self, app: &mut App) {
-        let mut event_loop_builder = EventLoop::<WinitUserEvent>::with_user_event();
+        let mut event_loop_builder = EventLoop::builder();
 
         // linux check is needed because x11 might be enabled on other platforms.
         #[cfg(all(target_os = "linux", feature = "x11"))]
@@ -109,7 +104,7 @@ impl Plugin for WinitPlugin {
             event_loop_builder.with_any_thread(self.run_on_any_thread);
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(all(target_os = "windows", not(__WINRT__)))]
         {
             use winit::platform::windows::EventLoopBuilderExtWindows;
             event_loop_builder.with_any_thread(self.run_on_any_thread);
@@ -123,16 +118,22 @@ impl Plugin for WinitPlugin {
                 .with_android_app(bevy_android::ANDROID_APP.get().expect(msg).clone());
         }
 
-        let event_loop = event_loop_builder
-            .build()
-            .expect("Failed to build event loop");
+        let (user_event_sender, user_event_receiver) = mpsc::channel::<WinitUserEvent>();
+
+        let event_loop = event_loop_builder.build().expect("Failed to build event loop");
+        let proxy = event_loop.create_proxy();
 
         app.init_resource::<WinitMonitors>()
             .init_resource::<WinitSettings>()
-            .insert_resource(DisplayHandleWrapper(event_loop.owned_display_handle()))
-            .insert_resource(EventLoopProxyWrapper(event_loop.create_proxy()))
+            // `OwnedDisplayHandle` is not `Send + Sync` in winit 0.31, so it must be stored as a
+            // non-send resource.
+            .insert_non_send_resource(DisplayHandleWrapper(event_loop.owned_display_handle()))
+            .insert_resource(EventLoopProxyWrapper {
+                proxy,
+                sender: user_event_sender,
+            })
             .add_message::<RawWinitWindowEvent>()
-            .set_runner(|app| winit_runner(app, event_loop))
+            .set_runner(move |app| winit_runner(app, event_loop, user_event_receiver))
             .add_systems(
                 Last,
                 (
@@ -146,7 +147,6 @@ impl Plugin for WinitPlugin {
                     .chain(),
             );
 
-        app.add_plugins(AccessKitPlugin);
         app.add_plugins(cursor::WinitCursorPlugin);
 
         app.add_observer(
@@ -198,22 +198,38 @@ pub struct RawWinitWindowEvent {
     pub event: winit::event::WindowEvent,
 }
 
-/// A wrapper type around [`winit::event_loop::EventLoopProxy`] with the specific
-/// [`winit::event::Event::UserEvent`] used in the [`WinitPlugin`].
+/// A wrapper around [`winit::event_loop::EventLoopProxy`] that provides Bevy's legacy
+/// `send_event`-style API on top of winit 0.31's wake-up-only proxy.
 ///
-/// The `EventLoopProxy` can be used to request a redraw from outside bevy.
-///
-/// Use `Res<EventLoopProxyWrapper>` to retrieve this resource.
-#[derive(Resource, Deref)]
-pub struct EventLoopProxyWrapper(EventLoopProxy<WinitUserEvent>);
+/// Winit will coalesce wake-ups; the actual queued [`WinitUserEvent`] values are delivered by
+/// draining an internal channel from [`winit::application::ApplicationHandler::proxy_wake_up`].
+#[derive(Resource, Clone)]
+pub struct EventLoopProxyWrapper {
+    proxy: EventLoopProxy,
+    sender: mpsc::Sender<WinitUserEvent>,
+}
+
+impl EventLoopProxyWrapper {
+    pub fn send_event(&self, event: WinitUserEvent) -> Result {
+        self.sender
+            .send(event)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "event loop stopped"))?;
+        self.proxy.wake_up();
+        Ok(())
+    }
+
+    pub fn wake_up(&self) {
+        self.proxy.wake_up();
+    }
+}
 
 /// A wrapper around [`winit::event_loop::OwnedDisplayHandle`]
 ///
 /// The `DisplayHandleWrapper` can be used to build integrations that rely on direct
 /// access to the display handle
 ///
-/// Use `Res<DisplayHandleWrapper>` to receive this resource.
-#[derive(Resource, Deref)]
+/// Use `NonSend<DisplayHandleWrapper>` to receive this resource.
+#[derive(Deref)]
 pub struct DisplayHandleWrapper(pub winit::event_loop::OwnedDisplayHandle);
 
 trait AppSendEvent {
@@ -241,8 +257,6 @@ pub type CreateWindowParams<'w, 's> = (
         Added<Window>,
     >,
     MessageWriter<'w, WindowCreated>,
-    ResMut<'w, WinitActionRequestHandlers>,
-    Res<'w, AccessibilityRequested>,
     Res<'w, WinitMonitors>,
 );
 

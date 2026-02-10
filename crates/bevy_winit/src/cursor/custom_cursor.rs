@@ -8,7 +8,7 @@ use wgpu_types::TextureFormat;
 /// Caches custom cursors. On many platforms, creating custom cursors is expensive, especially on
 /// the web.
 #[derive(Debug, Clone, Default, Resource)]
-pub struct WinitCustomCursorCache(pub HashMap<CustomCursorCacheKey, winit::window::CustomCursor>);
+pub struct WinitCustomCursorCache(pub HashMap<CustomCursorCacheKey, winit::cursor::CustomCursor>);
 
 /// Identifiers for custom cursors used in caching.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
