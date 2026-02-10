@@ -84,11 +84,16 @@ pub fn create_windows(
             #[cfg(all(target_os = "windows", __WINRT__))]
             {
                 let size = winit_window.surface_size();
-                if size.width != 0 && size.height != 0 {
-                    window
-                        .resolution
-                        .set_physical_resolution(size.width, size.height);
-                }
+                let (width, height) = if size.width == 0 || size.height == 0 {
+                    // WinRT can report a transient 0x0 size during startup. Using the default
+                    // Bevy size here can lead to a swapchain config that blocks or fails on UWP.
+                    // Use a safe minimum until a real `SurfaceResized` arrives.
+                    (1, 1)
+                } else {
+                    (size.width, size.height)
+                };
+
+                window.resolution.set_physical_resolution(width, height);
             }
 
             commands.entity(entity).insert((
