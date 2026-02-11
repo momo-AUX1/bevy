@@ -1,0 +1,38 @@
+[package]
+name = "winit-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { git = "https://github.com/momo-AUX1/bevy.git", branch = "WinRT", default-features = false, features = [
+  "std",
+  "multi_threaded",
+  "default_app",
+  "default_font",
+  "bevy_winit",
+  "3d_bevy_render",
+  "bevy_ui",
+  "bevy_ui_render",
+] }
+bevy_render = { git = "https://github.com/momo-AUX1/bevy.git", branch = "WinRT", features = ["gles"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = [
+  "ApplicationModel",
+  "ApplicationModel_Core",
+  "System_Profile",
+  "Storage",
+  "UI_Core",
+  "UI_Popups",
+  "Win32_System_WinRT",
+] }
+
+[patch.crates-io]
+winit = { git = "https://github.com/momo-AUX1/winit", branch = "WinRT" }
+naga = { git = "https://github.com/momo-AUX1/wgpu", branch = "WinRT" }
+wgpu = { git = "https://github.com/momo-AUX1/wgpu", branch = "WinRT" }
+wgpu-core = { git = "https://github.com/momo-AUX1/wgpu", branch = "WinRT" }
+wgpu-hal = { git = "https://github.com/momo-AUX1/wgpu", branch = "WinRT" }
+wgpu-types = { git = "https://github.com/momo-AUX1/wgpu", branch = "WinRT" }
+
+[workspace]
