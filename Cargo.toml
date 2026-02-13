@@ -4609,6 +4609,20 @@ category = "Gizmos"
 wasm = true
 
 [[example]]
+name = "debug_frustum_culling"
+path = "examples/usage/debug_frustum_culling.rs"
+# Causes an ICE on docs.rs
+doc-scrape-examples = false
+required-features = ["free_camera"]
+
+[package.metadata.example.debug_frustum_culling]
+name = "Debug Frustum Culling"
+description = "Example demonstrating how to debug frustum culling"
+category = "Usage"
+wasm = true
+
+
+[[example]]
 name = "custom_gltf_vertex_attribute"
 path = "examples/gltf/custom_gltf_vertex_attribute.rs"
 # Causes an ICE on docs.rs
