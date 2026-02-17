@@ -445,6 +445,24 @@ fn present_mode(
     window: &mut ExtractedWindow,
     caps: &wgpu::SurfaceCapabilities,
 ) -> wgpu::PresentMode {
+    if caps.present_modes.is_empty() {
+        // WinRT surfaces can transiently report zero present modes during early startup.
+        // Fall back to a deterministic mode instead of panicking the process.
+        let fallback = match window.present_mode {
+            PresentMode::Immediate | PresentMode::Mailbox | PresentMode::AutoNoVsync => {
+                wgpu::PresentMode::Immediate
+            }
+            PresentMode::Fifo | PresentMode::FifoRelaxed | PresentMode::AutoVsync => {
+                wgpu::PresentMode::Fifo
+            }
+        };
+        warn!(
+            "SurfaceCapabilities.present_modes is empty for window {:?}; using fallback {:?} for requested {:?}",
+            window.entity, fallback, window.present_mode
+        );
+        return fallback;
+    }
+
     let present_mode = match window.present_mode {
         PresentMode::Fifo => wgpu::PresentMode::Fifo,
         PresentMode::FifoRelaxed => wgpu::PresentMode::FifoRelaxed,
