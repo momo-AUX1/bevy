@@ -157,7 +157,11 @@ pub enum RenderSystems {
     /// Prepares extracted meshes.
     PrepareMeshes,
     /// Create any additional views such as those used for shadow mapping.
-    ManageViews,
+    CreateViews,
+    /// Specialize material meshes and shadow views.
+    Specialize,
+    /// Prepare any additional views such as those used for shadow mapping.
+    PrepareViews,
     /// Queue drawable entities as phase items in render phases ready for
     /// sorting (if necessary)
     Queue,
@@ -224,7 +228,9 @@ impl Render {
             (
                 ExtractCommands,
                 PrepareMeshes,
-                ManageViews,
+                CreateViews,
+                Specialize,
+                PrepareViews,
                 Queue,
                 PhaseSort,
                 Prepare,
@@ -234,6 +240,7 @@ impl Render {
             )
                 .chain(),
         );
+        schedule.ignore_ambiguity(Specialize, Specialize);
 
         schedule.configure_sets((ExtractCommands, PrepareAssets, PrepareMeshes, Prepare).chain());
         schedule.configure_sets(
@@ -287,8 +294,6 @@ impl Plugin for RenderPlugin {
             ViewPlugin,
             MeshRenderAssetPlugin,
             GlobalsPlugin,
-            #[cfg(feature = "morph")]
-            mesh::MorphPlugin,
             TexturePlugin,
             BatchingPlugin {
                 debug_flags: self.debug_flags,
