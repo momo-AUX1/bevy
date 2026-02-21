@@ -733,8 +733,8 @@ tracing = { version = "0.1", default-features = false, optional = true }
 bevy_dylib = { path = "crates/bevy_dylib", version = "0.19.0-dev", default-features = false, optional = true }
 
 [dev-dependencies]
-rand = "0.9.0"
-rand_chacha = "0.9.0"
+rand = "0.10.0"
+chacha20 = { version = "0.10.0", default-features = false, features = ["rng"] }
 ron = "0.12"
 flate2 = "1.0"
 serde = { version = "1", features = ["derive"] }
@@ -760,12 +760,13 @@ anyhow = "1"
 accesskit = "0.24"
 nonmax = "0.5"
 gltf = "1.4"
+indexmap = "2"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 ureq = { version = "3.0.8", features = ["json"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-getrandom = { version = "0.3", default-features = false, features = [
+getrandom = { version = "0.4", default-features = false, features = [
   "wasm_js",
 ] }
 wasm-bindgen = { version = "0.2" }
@@ -5219,6 +5220,7 @@ cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
 rustdoc-args = [
   "-Zunstable-options",
   "--generate-link-to-definition",
+  "--generate-macro-expansion",
   # Embed tags to the top of documentation pages for common Bevy traits
   # that are implemented by the current type, like `Component` or `Resource`.
   # This makes it easier to see at a glance what types are used for.
